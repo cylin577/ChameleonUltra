@@ -57,6 +57,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history (and tags) so `git describe` in firmware/Makefile.defs
+          # can find the nearest vX.Y tag. With the default shallow clone the
+          # describe call fails and the build falls back to APP_FW_VER_FALLBACK.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
