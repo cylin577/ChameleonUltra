@@ -19,12 +19,40 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.device }}
+    name: Build ${{ matrix.device }} (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    env:
+      # Empty for the normal image, "-standalone" for the standalone one, so
+      # both variants can ship side by side in a single release.
+      VARIANT_SUFFIX: ${{ matrix.variant == 'standalone' && '-standalone' || '' }}
     strategy:
       fail-fast: false
       matrix:
-        device: [ultra, lite]
+        include:
+          # Normal images: standalone modes excluded, smallest app.
+          - device: ultra
+            variant: recovery
+            standalone_flags: ''
+          - device: lite
+            variant: recovery
+            standalone_flags: ''
+          # Standalone images: every mode that device supports compiled in.
+          # Ultra-only modes (reader / RC522 based) are omitted for lite: the
+          # modes that declare their Ultra-only dependency guard out cleanly,
+          # but mode_relay.c includes rc522.h and calls pcd_14a_reader_*,
+          # which the lite build never compiles.
+          - device: ultra
+            variant: standalone
+            standalone_flags: >-
+              STANDALONE_AUTHTRACE=1 STANDALONE_SLOT_CYCLE=1 STANDALONE_AUTOCLONE=1
+              STANDALONE_READ_REPLAY=1 STANDALONE_DICT_CHECK=1 STANDALONE_EMUL_TRACE=1
+              STANDALONE_NFC_CANARY=1 STANDALONE_HF14A_TAP_SNIFF=1 STANDALONE_RELAY=1
+              STANDALONE_GDB_GATEWAY=1 STANDALONE_U2F=1
+          - device: lite
+            variant: standalone
+            standalone_flags: >-
+              STANDALONE_SLOT_CYCLE=1 STANDALONE_EMUL_TRACE=1 STANDALONE_NFC_CANARY=1
+              STANDALONE_GDB_GATEWAY=1 STANDALONE_U2F=1
 
     steps:
       - name: Checkout
@@ -114,12 +142,18 @@ jobs:
           nrfutil install nrf5sdk-tools
           nrfutil --version
 
-      - name: Build ${{ matrix.device }} firmware
+      - name: Build ${{ matrix.device }} firmware (${{ matrix.variant }})
         working-directory: firmware
         env:
           CURRENT_DEVICE_TYPE: ${{ matrix.device }}
         run: |
           chmod +x build.sh
+          # matrix.standalone_flags is a space-separated list of KEY=VALUE
+          # pairs (empty for the recovery variant); export each so the make
+          # invocations inside ./build.sh pick it up via their `?=` defaults.
+          for kv in ${{ matrix.standalone_flags }}; do
+            export "$kv"
+          done
           ./build.sh
           echo "---- built artifacts ----"
           ls -la objects/${{ matrix.device }}-dfu-app.zip \
@@ -129,14 +163,21 @@ jobs:
         working-directory: firmware
         run: |
           mkdir -p ../dist
-          cp objects/${{ matrix.device }}-dfu-app.zip     ../dist/ 2>/dev/null || true
-          cp objects/${{ matrix.device }}-application.uf2 ../dist/ 2>/dev/null || true
+          dev=${{ matrix.device }}
+          # Rename with the variant suffix so the recovery and standalone
+          # builds of a device don't clobber each other when the release step
+          # flattens every artifact into one directory.
+          for name in dfu-app.zip application.uf2; do
+            src="objects/$dev-$name"
+            [ -f "$src" ] || continue
+            cp "$src" "../dist/$dev${VARIANT_SUFFIX}-$name"
+          done
           ls -la ../dist
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.device }}-dfu
+          name: ${{ matrix.device }}-${{ matrix.variant }}-dfu
           path: dist/*
           if-no-files-found: error
           retention-days: 30
