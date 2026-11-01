@@ -9,6 +9,7 @@
 #include "nrfx_lpcomp.h"
 #include "nrfx_pwm.h"
 #include "protocols/em410x.h"
+#include "protocols/fdxb.h"
 #include "protocols/hidprox.h"
 #include "protocols/indala.h"
 #include "protocols/idteck.h"
@@ -39,6 +40,24 @@ static tag_specific_type_t m_tag_type = TAG_TYPE_UNDEFINED;
 // The pwm to broadcast modulated card id
 const nrfx_pwm_t m_broadcast = NRFX_PWM_INSTANCE(0);
 const nrf_pwm_sequence_t *m_pwm_seq = NULL;
+
+static void pwm_init(void);
+// PWM base clock currently programmed (set by pwm_init)
+static nrf_pwm_clk_t m_pwm_base_clock = NRF_PWM_CLK_125kHz;
+
+static nrf_pwm_clk_t pwm_base_for_type(tag_specific_type_t type) {
+    return IS_1MHZ_BASE_TYPE(type) ? NRF_PWM_CLK_1MHz : NRF_PWM_CLK_125kHz;
+}
+
+// The slot type can change while sensing is armed (hw slot type, econfig); re-init
+// the PWM when the loaded type needs a different base clock. Call only while the
+// PWM is stopped.
+static void lf_pwm_sync_base_clock(void) {
+    if (m_pwm_base_clock != pwm_base_for_type(m_tag_type)) {
+        nrfx_pwm_uninit(&m_broadcast);
+        pwm_init();
+    }
+}
 
 static void lf_field_lost(void) {
     // Open the incident interruption, so that the next event can be in and out normally
@@ -96,6 +115,7 @@ static void lpcomp_event_handler(nrf_lpcomp_event_t event) {
     // PWM has fully released LF_MOD, so ANT_NO_MOD() and the settle delay are
     // effective. NRFX_PWM_FLAG_LOOP kept the pin owned by the peripheral,
     // making the field check always read "present" due to self-drive on LF_RSSI.
+    lf_pwm_sync_base_clock();
     nrfx_pwm_simple_playback(&m_broadcast, m_pwm_seq, 10, NRFX_PWM_FLAG_STOP);
 
     NRF_LOG_INFO("LF FIELD DETECTED");
@@ -122,6 +142,7 @@ static void pwm_handler(nrfx_pwm_evt_type_t event_type) {
     bsp_delay_ms(2);  // let peak detector drain: ~2 ms time constant on LF_RSSI
     if (is_lf_field_exists()) {
         // Field still present — play another finite burst then check again.
+        lf_pwm_sync_base_clock();
         nrfx_pwm_simple_playback(&m_broadcast, m_pwm_seq, 10, NRFX_PWM_FLAG_STOP);
     } else {
         // Field gone — clean up.
@@ -141,8 +162,10 @@ static void pwm_init(void) {
     // their hardcoded counter_top values (8-64 range) produce the correct
     // absolute timing. PSK1 protocols need finer resolution for the 16us
     // subcarrier period, so pwm_init uses 1MHz base with counter_top=16.
-    // See tag_base_type.h IS_PSK1_TYPE for the list of qualifying types.
-    cfg.base_clock = IS_PSK1_TYPE(m_tag_type) ? NRF_PWM_CLK_1MHz : NRF_PWM_CLK_125kHz;
+    // FDX-B (134.2kHz) also uses the 1MHz base.
+    // See tag_base_type.h IS_1MHZ_BASE_TYPE for the list of qualifying types.
+    cfg.base_clock = pwm_base_for_type(m_tag_type);
+    m_pwm_base_clock = cfg.base_clock;
     cfg.count_mode = NRF_PWM_MODE_UP;
     cfg.load_mode = NRF_PWM_LOAD_WAVE_FORM;
     cfg.step_mode = NRF_PWM_STEP_AUTO;
@@ -287,6 +310,15 @@ int lf_tag_data_loadcb(tag_specific_type_t type, tag_data_buffer_t *buffer) {
         jablotron.free(codec);
         NRF_LOG_INFO("load lf jablotron data finish.");
         return LF_JABLOTRON_TAG_ID_SIZE;
+    }
+
+    if (type == TAG_TYPE_FDXB && buffer->length >= LF_FDXB_TAG_ID_SIZE) {
+        m_tag_type = type;
+        void *codec = fdxb.alloc();
+        m_pwm_seq = fdxb.modulator(codec, buffer->buffer);
+        fdxb.free(codec);
+        NRF_LOG_INFO("load lf fdxb data finish.");
+        return LF_FDXB_TAG_ID_SIZE;
     }
 
     if (type == TAG_TYPE_IDTECK && buffer->length >= LF_IDTECK_TAG_ID_SIZE) {
@@ -461,6 +493,18 @@ int lf_tag_jablotron_data_savecb(tag_specific_type_t type, tag_data_buffer_t *bu
 bool lf_tag_jablotron_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
     // default id: 5 bytes (top bit must be 0)
     uint8_t tag_id[5] = {0x01, 0xB6, 0x69, 0x00, 0x00};
+    return lf_tag_data_factory(slot, tag_type, tag_id, sizeof(tag_id));
+}
+
+int lf_tag_fdxb_data_savecb(tag_specific_type_t type, tag_data_buffer_t *buffer) {
+    return m_tag_type == TAG_TYPE_FDXB ? LF_FDXB_TAG_ID_SIZE : 0;
+}
+
+bool lf_tag_fdxb_data_factory(uint8_t slot, tag_specific_type_t tag_type) {
+    // default frame: country 999 (ISO 11784 test code), national ID 1, animal flag, CRC-16 in bytes 8-9
+    uint8_t tag_id[LF_FDXB_TAG_ID_SIZE] = {
+        0x01, 0x00, 0x00, 0x00, 0xC0, 0xF9, 0x00, 0x80, 0x44, 0x2E, 0x00, 0x00, 0x00,
+    };
     return lf_tag_data_factory(slot, tag_type, tag_id, sizeof(tag_id));
 }
 

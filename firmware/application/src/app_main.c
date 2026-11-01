@@ -782,6 +782,13 @@ static void btn_fn_copy_lf(uint8_t slot, tag_specific_type_t type) {
             size = LF_VIKING_TAG_ID_SIZE;
             data = id_buffer;
             break;
+#if defined(PROJECT_CHAMELEON_ULTRA)
+        case TAG_TYPE_FDXB:
+            status = scan_fdxb(id_buffer);
+            size = LF_FDXB_TAG_ID_SIZE;
+            data = id_buffer + 2;  // skip tag type
+            break;
+#endif
         case TAG_TYPE_JABLOTRON:
             status = scan_jablotron(id_buffer);
             size = LF_JABLOTRON_TAG_ID_SIZE;
@@ -990,6 +997,18 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
             /* Disarm the active standalone mode — works on any hardware
              * including clones where A+B triggers hardware reset. */
             app_standalone_disarm();
+            break;
+
+        case SettingsButtonStandaloneToggle:
+            app_standalone_on_button(STANDALONE_BTN_BOTH_LONG);
+            break;
+
+        case SettingsButtonStandaloneAction:
+            app_standalone_on_button(STANDALONE_BTN_BOTH_SHORT);
+            break;
+
+        case SettingsButtonStandaloneClear:
+            app_standalone_on_button(STANDALONE_BTN_BOTH_VLONG);
             break;
 
         case SettingsButtonShowBattery:
