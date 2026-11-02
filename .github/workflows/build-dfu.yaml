@@ -162,7 +162,9 @@ jobs:
           ./build.sh
           echo "---- built artifacts ----"
           ls -la objects/${{ matrix.device }}-dfu-app.zip \
-                 objects/${{ matrix.device }}-application.uf2 || true
+                 objects/${{ matrix.device }}-dfu-full.zip \
+                 objects/${{ matrix.device }}-application.uf2 \
+                 objects/${{ matrix.device }}-fullimage.uf2 || true
 
       - name: Collect artifacts
         working-directory: firmware
@@ -172,7 +174,7 @@ jobs:
           # Rename with the variant suffix so the recovery and standalone
           # builds of a device don't clobber each other when the release step
           # flattens every artifact into one directory.
-          for name in dfu-app.zip application.uf2; do
+          for name in dfu-app.zip dfu-full.zip application.uf2 fullimage.uf2; do
             src="objects/$dev-$name"
             [ -f "$src" ] || continue
             cp "$src" "../dist/$dev${VARIANT_SUFFIX}-$name"
