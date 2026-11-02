@@ -521,6 +521,15 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
         <button class="small" id="d_setpairreq">Set</button>
       </div>
       <div class="det">"Required" means a BLE pairing key (see D3) must be supplied before a host can connect. Turning it off removes that check.</div>
+      <div class="row" style="margin-top:10px">
+        <label class="cfgf">Button A taps<select id="d_mtA"><option value="1">single (1 tap)</option><option value="2">double (2 taps)</option><option value="3">triple (3 taps)</option><option value="4">quadruple (4 taps)</option><option value="5">quintuple (5 taps)</option></select></label>
+        <label class="cfgf">Button B taps<select id="d_mtB"><option value="1">single (1 tap)</option><option value="2">double (2 taps)</option><option value="3">triple (3 taps)</option><option value="4">quadruple (4 taps)</option><option value="5">quintuple (5 taps)</option></select></label>
+        <label class="cfgf">Tap threshold (ms)<input id="d_mtTh" type="number" min="50" max="1000" step="10" value="250"></label>
+        <button class="ghost small" id="d_getmt">Get</button>
+        <button class="small" id="d_setmt">Set</button>
+      </div>
+      <div class="det">A button's short-press function runs only after that many taps (1-5). Consecutive taps must be no more than the threshold apart; the gap is measured from one tap's release to the next tap's press. The threshold is stored in 10 ms steps (50-1000 ms). Tap counts and the threshold are held in RAM until you "Save settings" (D5).</div>
+      <div class="result" id="d_mtResult"></div>
       <div class="result" id="d_btnResult"></div>
     </div>
 
@@ -1368,10 +1377,11 @@ AABBCCDDEEFF</textarea></label>
 
 <script src="canary.js?v=26"></script>
 <script src="aid_database.js?v=1"></script>
-<script src="button_capabilities.js?v=1"></script>
+<script src="button_capabilities.js?v=2"></script>
 <script src="disasm_thumb.js?v=1"></script>
 <script src="hf14ainfo.js?v=1"></script>
-<script src="fullcmd.js?v=24"></script>
-<script src="terminal.js?v=18"></script>
+<script src="multitap.js?v=1"></script>
+<script src="fullcmd.js?v=25"></script>
+<script src="terminal.js?v=19"></script>
 </body>
 </html>

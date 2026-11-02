@@ -541,7 +541,57 @@ hwSettings.command("btnpress", "Get or set button press function of Button A and
   const type = (a.a ? "A" : "B").charCodeAt(0);
   const f = okOrThrow(await request(isLong ? CU.GET_LONG_BUTTON_PRESS_CONFIG : CU.GET_BUTTON_PRESS_CONFIG, [type]));
   const name = Object.keys(BUTTON_FN_BY_NAME).find(k=>BUTTON_FN_BY_NAME[k]===f.data[0]) || f.data[0];
-  return ["Button "+(a.a?"A":"B")+" ("+(isLong?"long":"short")+" press): "+name];
+  let tapNote = "";
+  if(!isLong){
+    try {
+      const mf = okOrThrow(await request(CU.GET_MULTI_TAP_CONFIG));
+      const cfg = multitapUnpack(mf.data);
+      const n = type === 65 ? cfg.tapsA : cfg.tapsB;
+      tapNote = " ("+n+" tap"+(n===1?"":"s")+")";
+    } catch(e){}
+  }
+  return ["Button "+(a.a?"A":"B")+" ("+(isLong?"long":"short")+" press"+tapNote+"): "+name];
+});
+
+hwSettings.command("multitap", "Get or set the multi-tap button config. A button's short-press function runs only after the requested number of taps (1-5). Consecutive taps must be no more than the threshold apart (50-1000 ms, factory default 250 ms).", [
+  {names:["--button-a-taps"], takesValue:true, dest:"aTaps", choices:MULTITAP_TAP_NAMES},
+  {names:["--button-b-taps"], takesValue:true, dest:"bTaps", choices:MULTITAP_TAP_NAMES},
+  {names:["--threshold-ms"], takesValue:true, dest:"threshold"},
+], async (a) => {
+  need();
+  let threshold;
+  if(a.threshold !== undefined){
+    const raw = Number(a.threshold);
+    if(!Number.isFinite(raw)) return ["Error: --threshold-ms must be a number."];
+    let snapped;
+    try { snapped = multitapSnapThreshold(raw); }
+    catch(e){ return ["Error: the --threshold-ms value must be between 50 and 1000 milliseconds (got "+raw+")."]; }
+    threshold = snapped;
+  }
+  let cur;
+  try {
+    const f = okOrThrow(await request(CU.GET_MULTI_TAP_CONFIG));
+    cur = multitapUnpack(f.data);
+  } catch(e){
+    return ["Multi-tap settings are not supported by the current firmware."];
+  }
+  const newA = a.aTaps !== undefined ? MULTITAP_COUNT_BY_NAME[a.aTaps] : cur.tapsA;
+  const newB = a.bTaps !== undefined ? MULTITAP_COUNT_BY_NAME[a.bTaps] : cur.tapsB;
+  const newTh = threshold !== undefined ? threshold : cur.thresholdMs;
+  const changed = (newA !== cur.tapsA) || (newB !== cur.tapsB) || (newTh !== cur.thresholdMs);
+  if(changed){
+    try {
+      okOrThrow(await request(CU.SET_MULTI_TAP_CONFIG, multitapPack(newA, newB, newTh)));
+    } catch(e){
+      return ["Multi-tap settings are not supported by the current firmware."];
+    }
+  }
+  const lines = [" - Multi-tap button configuration:"];
+  lines.push("   Button A taps : "+multitapLabel(newA)+(newA!==cur.tapsA ? " (was "+multitapLabel(cur.tapsA)+")" : ""));
+  lines.push("   Button B taps : "+multitapLabel(newB)+(newB!==cur.tapsB ? " (was "+multitapLabel(cur.tapsB)+")" : ""));
+  lines.push("   Tap threshold : "+newTh+" ms"+(newTh!==cur.thresholdMs ? " (was "+cur.thresholdMs+" ms)" : ""));
+  if(changed) lines.push("Do not forget to store your settings in flash! (hw settings store)");
+  return lines;
 });
 
 hwSettings.command("blekey", "Get or set the ble connect key", [

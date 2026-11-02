@@ -41,6 +41,7 @@ const CU = {
   GET_DFU_SETTINGS_VERSION:1054, SET_DFU_SETTINGS_VERSION:1055, BL_STAGE_COMMIT_RAW:1056,
   BL_INFO:1057, FDS_LIST:1058, FDS_READ:1059, U2F_SET_ATTESTATION:1060,
   GET_BOOTLOADER_VERSION:1061, GET_FREE_MEMORY:1062,
+  GET_MULTI_TAP_CONFIG:1063, SET_MULTI_TAP_CONFIG:1064,
 
   HF14A_SCAN:2000, MF1_DETECT_SUPPORT:2001, MF1_DETECT_PRNG:2002,
   MF1_AUTH_ONE_KEY_BLOCK:2007, MF1_READ_ONE_BLOCK:2008, MF1_WRITE_ONE_BLOCK:2009,
@@ -461,7 +462,16 @@ wire("d_getbtn", $("d_btnResult"), async () => {
   const isLong = $("d_btnPress").value === "long";
   const f = okOrThrow(await request(isLong ? CU.GET_LONG_BUTTON_PRESS_CONFIG : CU.GET_BUTTON_PRESS_CONFIG, [type]));
   $("d_btnFn").value = String(f.data[0]);
-  showResult($("d_btnResult"), "Button "+$("d_btnSel").value+" ("+$("d_btnPress").value+" press): "+(BUTTON_FN_NAMES[f.data[0]]||f.data[0]));
+  let tapNote = "";
+  if(!isLong){
+    try {
+      const mf = okOrThrow(await request(CU.GET_MULTI_TAP_CONFIG));
+      const cfg = multitapUnpack(mf.data);
+      const n = type === 65 ? cfg.tapsA : cfg.tapsB;
+      tapNote = ", "+n+" tap"+(n===1?"":"s");
+    } catch(e){}
+  }
+  showResult($("d_btnResult"), "Button "+$("d_btnSel").value+" ("+$("d_btnPress").value+" press"+tapNote+"): "+(BUTTON_FN_NAMES[f.data[0]]||f.data[0]));
 });
 wire("d_setbtn", $("d_btnResult"), async () => {
   const type = $("d_btnSel").value.charCodeAt(0);
@@ -478,6 +488,36 @@ wire("d_getpairreq", $("d_btnResult"), async () => {
 wire("d_setpairreq", $("d_btnResult"), async () => {
   okOrThrow(await request(CU.SET_BLE_PAIRING_ENABLE, [Number($("d_pairreq").value)]));
   showResult($("d_btnResult"), "BLE pairing requirement updated.", "ok");
+});
+
+const dMt = $("d_mtResult");
+wire("d_getmt", dMt, async () => {
+  try {
+    const f = okOrThrow(await request(CU.GET_MULTI_TAP_CONFIG));
+    const cfg = multitapUnpack(f.data);
+    $("d_mtA").value = String(cfg.tapsA);
+    $("d_mtB").value = String(cfg.tapsB);
+    $("d_mtTh").value = String(cfg.thresholdMs);
+    showResult(dMt, "Multi-tap: A "+multitapLabel(cfg.tapsA)+", B "+multitapLabel(cfg.tapsB)+", threshold "+cfg.thresholdMs+" ms");
+  } catch(e){
+    const msg = String(e && e.message || e);
+    if(msg.indexOf("doesn't declare")>=0 || msg.indexOf("NOT_IMPLEMENTED")>=0)
+      showResult(dMt, "Multi-tap settings are not supported by the current firmware.");
+    else throw e;
+  }
+});
+wire("d_setmt", dMt, async () => {
+  try {
+    const tapsA = Number($("d_mtA").value), tapsB = Number($("d_mtB").value);
+    const threshold = multitapSnapThreshold(Number($("d_mtTh").value));
+    okOrThrow(await request(CU.SET_MULTI_TAP_CONFIG, multitapPack(tapsA, tapsB, threshold)));
+    showResult(dMt, "Multi-tap set: A "+multitapLabel(tapsA)+", B "+multitapLabel(tapsB)+", threshold "+threshold+" ms. Do not forget to save settings to flash (D5).", "ok");
+  } catch(e){
+    const msg = String(e && e.message || e);
+    if(msg.indexOf("doesn't declare")>=0 || msg.indexOf("NOT_IMPLEMENTED")>=0 || msg.indexOf("PAR_ERR")>=0)
+      showResult(dMt, "Multi-tap settings are not supported by the current firmware, or the values were rejected (threshold must be a multiple of 10 ms, 50-1000).");
+    else throw e;
+  }
 });
 
 // Persistent debug log (DATA_CMD_LOG_*, cmd_processor_log_* in app_cmd.c).
