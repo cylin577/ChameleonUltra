@@ -17,10 +17,6 @@ static int g_fail = 0, g_checks = 0;
 #define RTC_COUNTER_MASK 0x00FFFFFFu
 #define TICKS_PER_SECOND 16384u
 
-static uint32_t ticks_to_ms(uint32_t ticks) {
-    return (ticks * 1000u) / TICKS_PER_SECOND;
-}
-
 /* Same wrap-safe subtraction the SDK's app_timer_cnt_diff_compute() does. */
 static uint32_t diff_ticks(uint32_t ticks_to, uint32_t ticks_from) {
     return (ticks_to - ticks_from) & RTC_COUNTER_MASK;
@@ -136,7 +132,7 @@ static uint32_t caller_elapsed_ms(uint32_t press_ticks, uint32_t prev_release_ti
     if (counter == 0) {
         return 0;
     }
-    return ticks_to_ms(diff_ticks(press_ticks, prev_release_ticks));
+    return app_button_tap_elapsed_ms(diff_ticks(press_ticks, prev_release_ticks), TICKS_PER_SECOND);
 }
 
 static void test_caller_measures_release_to_press(void) {
@@ -146,7 +142,7 @@ static void test_caller_measures_release_to_press(void) {
 
     uint32_t elapsed = caller_elapsed_ms(tap2_press, tap1_release, 1);
     CHECK(elapsed == 125);                                                  /* hold time excluded */
-    CHECK(elapsed != ticks_to_ms(diff_ticks(tap2_release, tap1_release)));
+    CHECK(elapsed != app_button_tap_elapsed_ms(diff_ticks(tap2_release, tap1_release), TICKS_PER_SECOND));
 
     app_button_tap_result_t r = app_button_tap_on_short_press(elapsed, 1, 2, THRESHOLD_MS);
     CHECK(r.fire);
@@ -168,6 +164,15 @@ static void test_caller_gap_survives_counter_wrap(void) {
     CHECK(r.count == 0);
 }
 
+/* the tick -> millisecond conversion used by the firmware */
+static void test_elapsed_ms_conversion(void) {
+    CHECK(app_button_tap_elapsed_ms(0, TICKS_PER_SECOND) == 0);
+    CHECK(app_button_tap_elapsed_ms(TICKS_PER_SECOND, TICKS_PER_SECOND) == 1000);
+    CHECK(app_button_tap_elapsed_ms(1638, TICKS_PER_SECOND) == 99); /* floor */
+    CHECK(app_button_tap_elapsed_ms(TICKS_PER_SECOND * 2, TICKS_PER_SECOND) == 2000);
+    CHECK(app_button_tap_elapsed_ms(1000, 0) == 0);                 /* no division by zero */
+}
+
 int main(void) {
     test_required_one_fires_immediately();
     test_zero_required_behaves_like_one();
@@ -180,6 +185,7 @@ int main(void) {
     test_stale_gap_restarts();
     test_caller_measures_release_to_press();
     test_caller_gap_survives_counter_wrap();
+    test_elapsed_ms_conversion();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

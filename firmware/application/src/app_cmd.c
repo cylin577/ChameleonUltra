@@ -575,6 +575,11 @@ static data_frame_tx_t *cmd_processor_set_multi_tap_config(uint16_t cmd, uint16_
         (threshold_ms < SETTINGS_MULTI_TAP_MIN_MS) || (threshold_ms > SETTINGS_MULTI_TAP_MAX_MS)) {
         return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     }
+    /* The device stores the threshold in units of 10 ms, so a non-multiple
+     * cannot be represented and must be rejected instead of silently floored. */
+    if ((threshold_ms % SETTINGS_MULTI_TAP_UNIT_MS) != 0) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
     settings_set_button_tap_count('A', taps_a);
     settings_set_button_tap_count('B', taps_b);
     settings_set_multi_tap_threshold_ms(threshold_ms);

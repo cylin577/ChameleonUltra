@@ -27,4 +27,12 @@ app_button_tap_result_t app_button_tap_on_short_press(uint32_t elapsed_ms,
                                                       uint8_t required,
                                                       uint32_t threshold_ms);
 
+/* Convert a timer tick count to milliseconds.
+ *
+ * @param elapsed_ticks      Elapsed timer ticks.
+ * @param ticks_per_second   Timer tick rate (0 returns 0).
+ * @return Elapsed time in milliseconds (truncated).
+ */
+uint32_t app_button_tap_elapsed_ms(uint32_t elapsed_ticks, uint32_t ticks_per_second);
+
 #endif

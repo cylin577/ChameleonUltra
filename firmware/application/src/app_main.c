@@ -318,6 +318,9 @@ static void timer_button_event_handle(void *arg) {
                 /* Best available approximation of the press moment: the
                  * original press event was overwritten by the debounce race. */
                 m_last_btn_press[BTN_IDX_B] = app_timer_cnt_get();
+                /* The synthesised press time is an approximation, so the
+                 * pending tap sequence cannot be measured and is dropped. */
+                m_btn_tap_count[BTN_IDX_B] = 0;
                 NRF_LOG_INFO("BUTTON_B_PRESS_SYNTH");
             } else if (!other_high && m_is_b_btn_press) {
                 m_is_b_btn_release = true;
@@ -334,6 +337,9 @@ static void timer_button_event_handle(void *arg) {
             if (other_high && !m_is_a_btn_press) {
                 m_is_a_btn_press = true;
                 m_last_btn_press[BTN_IDX_A] = app_timer_cnt_get();
+                /* The synthesised press time is an approximation, so the
+                 * pending tap sequence cannot be measured and is dropped. */
+                m_btn_tap_count[BTN_IDX_A] = 0;
                 NRF_LOG_INFO("BUTTON_A_PRESS_SYNTH");
             } else if (!other_high && m_is_a_btn_press) {
                 m_is_a_btn_release = true;
@@ -1112,7 +1118,7 @@ static bool button_tap_on_short_release(int idx, char which) {
     if (m_btn_tap_count[idx] > 0) {
         /* wrap-safe: app_timer_cnt_diff_compute masks to the RTC counter width */
         uint32_t elapsed_ticks = app_timer_cnt_diff_compute(press_ticks, m_btn_prev_release_ticks[idx]);
-        elapsed_ms = (uint32_t)(((uint64_t)elapsed_ticks * 1000ULL) / APP_TIMER_TICKS(1000));
+        elapsed_ms = app_button_tap_elapsed_ms(elapsed_ticks, APP_TIMER_TICKS(1000));
     }
     app_button_tap_result_t r = app_button_tap_on_short_press(elapsed_ms,
                                                               m_btn_tap_count[idx], required, threshold_ms);

@@ -2,14 +2,11 @@ import os, sys, unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import io
-import struct
 from contextlib import redirect_stdout
 
 from chameleon_cli_unit import (
     HWSettingsMultiTap,
     MULTITAP_COUNT_BY_NAME,
-    MULTITAP_MAX_THRESHOLD_MS,
-    MULTITAP_MIN_THRESHOLD_MS,
     MULTITAP_NAME_BY_COUNT,
     MULTITAP_TAP_NAMES,
     multitap_count_text,
@@ -17,6 +14,8 @@ from chameleon_cli_unit import (
 )
 from chameleon_utils import ArgsParserError, UnexpectedResponseError
 import chameleon_com
+import chameleon_cmd
+from chameleon_enum import Command, Status
 
 
 class FakeCmd:
@@ -46,6 +45,20 @@ def make_unit(fake):
     unit = HWSettingsMultiTap()
     unit._device_cmd = fake
     return unit
+
+
+class FakeDevice:
+    """Minimal stand-in for chameleon_com.ChameleonCom (no hardware needed)."""
+
+    def __init__(self, response=None):
+        self.response = response
+        self.sent = []
+
+    def send_cmd_sync(self, cmd, data=b''):
+        self.sent.append((cmd, data))
+        if self.response is not None:
+            return self.response
+        return chameleon_com.Response(cmd=cmd, status=Status.SUCCESS)
 
 
 class MultiTapCli(unittest.TestCase):
@@ -172,18 +185,41 @@ class MultiTapCli(unittest.TestCase):
         self.assertIn("unchanged if omitted (factory default: single)", help_text)
         self.assertIn("rounded down to a multiple of 10 ms", help_text)
 
-    def test_snapped_threshold_matches_device_storage(self):
-        # the device stores units of 10 ms and returns units * 10, so the
-        # snapped value must survive the round trip unchanged
-        for raw in range(MULTITAP_MIN_THRESHOLD_MS, MULTITAP_MAX_THRESHOLD_MS + 1):
-            snapped = (raw // 10) * 10
-            units = snapped // 10
-            self.assertEqual(units * 10, snapped)
-            self.assertEqual(units * 10 % 10, 0)
+    def test_set_multi_tap_config_sends_expected_bytes(self):
+        # the real ChameleonCMD must put the config on the wire as
+        # taps_a, taps_b, threshold_ms (little endian)
+        device = FakeDevice()
+        cmd = chameleon_cmd.ChameleonCMD(device)
+        cmd.set_multi_tap_config(3, 1, 250)
+        self.assertEqual(
+            device.sent,
+            [(Command.SET_MULTI_TAP_CONFIG, b'\x03\x01\xfa\x00')],
+        )
 
-    def test_wire_format_is_little_endian(self):
-        self.assertEqual(struct.pack('<BBH', 3, 1, 250), b'\x03\x01\xfa\x00')
-        self.assertEqual(struct.unpack('<BBH', b'\x03\x01\xfa\x00'), (3, 1, 250))
+    def test_get_multi_tap_config_parses_valid_response(self):
+        # a valid 4 byte payload is decoded by the real ChameleonCMD
+        device = FakeDevice(
+            response=chameleon_com.Response(
+                cmd=Command.GET_MULTI_TAP_CONFIG,
+                status=Status.SUCCESS,
+                data=b'\x03\x01\xfa\x00',
+            )
+        )
+        cmd = chameleon_cmd.ChameleonCMD(device)
+        self.assertEqual(cmd.get_multi_tap_config(), (3, 1, 250))
+
+    def test_get_multi_tap_config_rejects_malformed_response(self):
+        # a short payload must raise UnexpectedResponseError, not struct.error
+        device = FakeDevice(
+            response=chameleon_com.Response(
+                cmd=Command.GET_MULTI_TAP_CONFIG,
+                status=Status.SUCCESS,
+                data=b'\x03\x01\xfa',
+            )
+        )
+        cmd = chameleon_cmd.ChameleonCMD(device)
+        with self.assertRaises(UnexpectedResponseError):
+            cmd.get_multi_tap_config()
 
 
 if __name__ == '__main__':
