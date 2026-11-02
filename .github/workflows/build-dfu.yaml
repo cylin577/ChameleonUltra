@@ -217,3 +217,16 @@ jobs:
           files: release-dist/*
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+      - name: Append downloads table to release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'nightly' }}"
+          body_file=release-notes.md
+          gh release view "$tag" --json body -q .body > "$body_file" 2>/dev/null || printf '' > "$body_file"
+          if ! grep -q '<!-- chameleon-downloads -->' "$body_file"; then
+            printf '\n' >> "$body_file"
+            cat .github/release-downloads.md >> "$body_file"
+            gh release edit "$tag" --notes-file "$body_file"
+          fi
