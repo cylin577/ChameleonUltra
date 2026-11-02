@@ -67,6 +67,8 @@ class Command(enum.IntEnum):
     # long-press-threshold IDs, which the official GUI gates on).
     GET_BOOTLOADER_VERSION = 1061
     GET_FREE_MEMORY = 1062
+    GET_MULTI_TAP_CONFIG = 1063
+    SET_MULTI_TAP_CONFIG = 1064
 
     GET_BLE_NAME = 1043
     SET_BLE_NAME = 1044

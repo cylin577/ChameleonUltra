@@ -27,6 +27,7 @@
 NRF_LOG_MODULE_REGISTER();
 
 #include "app_cmd.h"
+#include "app_button_tap.h"
 #include "ble_main.h"
 #include "bsp_delay.h"
 #include "bsp_time.h"
@@ -54,9 +55,16 @@ NRF_LOG_MODULE_REGISTER();
 // Defining soft timers
 APP_TIMER_DEF(m_button_check_timer); // Timer for button debounce
 
-static uint32_t m_last_btn_press = 0;
+#define BTN_IDX_A      0
+#define BTN_IDX_B      1
+#define BTN_IDX_COUNT  2
 
-static bool m_is_btn_long_press = false;
+/* Per-button press state. The press timestamp must be per button: a shared
+ * one made the long/short classification leak from one button to the other. */
+static uint32_t m_last_btn_press[BTN_IDX_COUNT] = {0, 0};        /* press ticks, per button */
+static bool m_is_btn_long_press[BTN_IDX_COUNT] = {false, false}; /* per button */
+static uint32_t m_btn_prev_release_ticks[BTN_IDX_COUNT] = {0, 0}; /* release ticks of the last completed short tap */
+static uint8_t  m_btn_tap_count[BTN_IDX_COUNT]  = {0, 0};
 
 static bool m_is_b_btn_press = false;
 static bool m_is_a_btn_press = false;
@@ -235,25 +243,23 @@ static void timer_button_event_handle(void *arg) {
             if (settings_get_button_press_config('b') != SettingsButtonDisable) {
                 NRF_LOG_INFO("BUTTON_B_PRESS");
                 m_is_b_btn_press = true;
-                m_last_btn_press = app_timer_cnt_get();
+                m_last_btn_press[BTN_IDX_B] = app_timer_cnt_get();
             }
         }
         if (pin == BUTTON_2) {
             if (settings_get_button_press_config('a') != SettingsButtonDisable) {
                 NRF_LOG_INFO("BUTTON_A_PRESS");
                 m_is_a_btn_press = true;
-                m_last_btn_press = app_timer_cnt_get();
+                m_last_btn_press[BTN_IDX_A] = app_timer_cnt_get();
             }
         }
     }
 
     if (nrf_gpio_pin_read(pin) == 0) {
-        uint32_t now = app_timer_cnt_get();
-        uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press);
-
-        bool is_long_press = ticks > APP_TIMER_TICKS(1000);
-
         if (pin == BUTTON_1 && m_is_b_btn_press == true) {
+            uint32_t now = app_timer_cnt_get();
+            uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press[BTN_IDX_B]);
+            bool is_long_press = ticks > APP_TIMER_TICKS(1000);
             // If button is disabled, we can't dispatch key event.
             if (settings_get_button_press_config('b') != SettingsButtonDisable) {
                 m_is_b_btn_release = true;
@@ -263,10 +269,13 @@ static void timer_button_event_handle(void *arg) {
                 } else {
                     NRF_LOG_INFO("BUTTON_B_RELEASE_LONG");
                 }
-                m_is_btn_long_press = is_long_press;
+                m_is_btn_long_press[BTN_IDX_B] = is_long_press;
             }
         }
         if (pin == BUTTON_2 && m_is_a_btn_press == true) {
+            uint32_t now = app_timer_cnt_get();
+            uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press[BTN_IDX_A]);
+            bool is_long_press = ticks > APP_TIMER_TICKS(1000);
             if (settings_get_button_press_config('a') != SettingsButtonDisable) {
                 m_is_a_btn_release = true;
                 m_is_a_btn_press = false;
@@ -275,7 +284,7 @@ static void timer_button_event_handle(void *arg) {
                 } else {
                     NRF_LOG_INFO("BUTTON_A_RELEASE_LONG");
                 }
-                m_is_btn_long_press = is_long_press;
+                m_is_btn_long_press[BTN_IDX_A] = is_long_press;
             }
         }
     }
@@ -306,10 +315,16 @@ static void timer_button_event_handle(void *arg) {
         if (enabled) {
             if (other_high && !m_is_b_btn_press) {
                 m_is_b_btn_press = true;
+                /* Best available approximation of the press moment: the
+                 * original press event was overwritten by the debounce race. */
+                m_last_btn_press[BTN_IDX_B] = app_timer_cnt_get();
                 NRF_LOG_INFO("BUTTON_B_PRESS_SYNTH");
             } else if (!other_high && m_is_b_btn_press) {
                 m_is_b_btn_release = true;
                 m_is_b_btn_press   = false;
+                /* The synth path cannot know the hold duration, so treat it
+                 * as a short press (same as the previous shared-flag behaviour). */
+                m_is_btn_long_press[BTN_IDX_B] = false;
                 NRF_LOG_INFO("BUTTON_B_RELEASE_SYNTH");
             }
         }
@@ -318,10 +333,12 @@ static void timer_button_event_handle(void *arg) {
         if (enabled) {
             if (other_high && !m_is_a_btn_press) {
                 m_is_a_btn_press = true;
+                m_last_btn_press[BTN_IDX_A] = app_timer_cnt_get();
                 NRF_LOG_INFO("BUTTON_A_PRESS_SYNTH");
             } else if (!other_high && m_is_a_btn_press) {
                 m_is_a_btn_release = true;
                 m_is_a_btn_press   = false;
+                m_is_btn_long_press[BTN_IDX_A] = false;
                 NRF_LOG_INFO("BUTTON_A_RELEASE_SYNTH");
             }
         }
@@ -331,6 +348,9 @@ static void timer_button_event_handle(void *arg) {
     if (m_is_a_btn_press && m_is_b_btn_press && !m_chord_active) {
         m_chord_active = true;
         m_chord_start  = app_timer_cnt_get();
+        /* A chord is never a tap: drop any pending multi-tap sequence. */
+        m_btn_tap_count[BTN_IDX_A] = 0;
+        m_btn_tap_count[BTN_IDX_B] = 0;
         NRF_LOG_INFO("CHORD_START");
     }
 }
@@ -1063,9 +1083,42 @@ static bool dispatch_chord_if_pending(void) {
      * intend two separate single-button actions. */
     m_is_a_btn_release  = false;
     m_is_b_btn_release  = false;
-    m_is_btn_long_press = false;
+    m_is_btn_long_press[BTN_IDX_A] = false;
+    m_is_btn_long_press[BTN_IDX_B] = false;
+    m_btn_tap_count[BTN_IDX_A] = 0;
+    m_btn_tap_count[BTN_IDX_B] = 0;
     m_chord_active      = false;
     return consumed;
+}
+
+/**@brief Register a short-press release in the button's multi-tap sequence.
+ *
+ * The inter-tap gap is measured from the previous tap's RELEASE to this
+ * tap's PRESS (the standard double-tap definition). The measurement is done
+ * in timer ticks with the SDK's wrap-safe diff, so a sequence that straddles
+ * the 24-bit RTC counter wrap is not lost.
+ *
+ * @param idx Button index (BTN_IDX_A / BTN_IDX_B).
+ * @param which Button type, 'a' or 'b'.
+ * @return true when the button's short-press function must run now.
+ */
+static bool button_tap_on_short_release(int idx, char which) {
+    uint8_t required = settings_get_button_tap_count(which);
+    if (required <= 1) { m_btn_tap_count[idx] = 0; return true; }  /* current behaviour, no added latency */
+    uint32_t threshold_ms = settings_get_multi_tap_threshold_ms();
+    uint32_t now_ticks = app_timer_cnt_get();
+    uint32_t press_ticks = m_last_btn_press[idx];
+    uint32_t elapsed_ms = 0;
+    if (m_btn_tap_count[idx] > 0) {
+        /* wrap-safe: app_timer_cnt_diff_compute masks to the RTC counter width */
+        uint32_t elapsed_ticks = app_timer_cnt_diff_compute(press_ticks, m_btn_prev_release_ticks[idx]);
+        elapsed_ms = (uint32_t)(((uint64_t)elapsed_ticks * 1000ULL) / APP_TIMER_TICKS(1000));
+    }
+    app_button_tap_result_t r = app_button_tap_on_short_press(elapsed_ms,
+                                                              m_btn_tap_count[idx], required, threshold_ms);
+    m_btn_tap_count[idx] = r.count;
+    m_btn_prev_release_ticks[idx] = now_ticks;
+    return r.fire;
 }
 
 /**@brief button press event process
@@ -1089,18 +1142,26 @@ static void button_press_process(void) {
     // Make sure that one of the AB buttons has a click event
     if (m_is_b_btn_release || m_is_a_btn_release) {
         if (m_is_a_btn_release) {
-            if (!m_is_btn_long_press) {
-                run_button_function_by_settings(settings_get_button_press_config('a'));
+            if (!m_is_btn_long_press[BTN_IDX_A]) {
+                if (button_tap_on_short_release(BTN_IDX_A, 'a')) {
+                    run_button_function_by_settings(settings_get_button_press_config('a'));
+                }
             } else {
                 run_button_function_by_settings(settings_get_long_button_press_config('a'));
+                /* A long press is a separate gesture: it never counts as a
+                 * tap and it resets the pending multi-tap sequence. */
+                m_btn_tap_count[BTN_IDX_A] = 0;
             }
             m_is_a_btn_release = false;
         }
         if (m_is_b_btn_release) {
-            if (!m_is_btn_long_press) {
-                run_button_function_by_settings(settings_get_button_press_config('b'));
+            if (!m_is_btn_long_press[BTN_IDX_B]) {
+                if (button_tap_on_short_release(BTN_IDX_B, 'b')) {
+                    run_button_function_by_settings(settings_get_button_press_config('b'));
+                }
             } else {
                 run_button_function_by_settings(settings_get_long_button_press_config('b'));
+                m_btn_tap_count[BTN_IDX_B] = 0;
             }
             m_is_b_btn_release = false;
         }

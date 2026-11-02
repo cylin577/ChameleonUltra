@@ -5,13 +5,22 @@
 
 #include "utils.h"
 
-#define SETTINGS_CURRENT_VERSION 7
+#define SETTINGS_CURRENT_VERSION 8
 #define SETTINGS_SLEEP_TIMEOUT_DEFAULT_S 8   // default wake timeout in seconds (matches SLEEP_DELAY_MS_BUTTON_WAKEUP)
 #define SETTINGS_SLEEP_TIMEOUT_MIN_S      5
 #define SETTINGS_SLEEP_TIMEOUT_MAX_S      60
 #define BLE_PAIRING_KEY_LEN 6
 #define DEFAULT_BLE_PAIRING_KEY "123456"  // length must == 6
 #define BLE_NAME_MAX_LEN 20   // keep comfortably under BLE_GAP_DEVNAME_MAX_LEN (31 with default GAP cfg)
+
+/* Multi-tap button action (add on version8) */
+#define SETTINGS_TAP_COUNT_MIN         1
+#define SETTINGS_TAP_COUNT_MAX         5
+#define SETTINGS_TAP_COUNT_DEFAULT     1
+#define SETTINGS_MULTI_TAP_UNIT_MS     10   /* stored in units of 10 ms */
+#define SETTINGS_MULTI_TAP_DEFAULT_MS  250
+#define SETTINGS_MULTI_TAP_MIN_MS      50
+#define SETTINGS_MULTI_TAP_MAX_MS      1000
 
 typedef enum {
     SettingsAnimationModeFull = 0U,
@@ -67,6 +76,12 @@ typedef struct ALIGN_U32 {
     // BLE_NAME_MAX_LEN + 1 bytes (add on version7)
     char ble_name[BLE_NAME_MAX_LEN + 1]; // NUL-terminated custom BLE name; empty string = use firmware default
 
+    // 3 bytes (add on version8) -- these were the struct's tail padding, so the
+    // persisted FDS record stays 36 bytes and version<=7 records still load.
+    uint8_t button_a_tap_count;   // taps needed to fire A's short action (1..5)
+    uint8_t button_b_tap_count;   // taps needed to fire B's short action (1..5)
+    uint8_t multi_tap_threshold;  // max gap between taps, in units of 10 ms (5..100)
+
     /*
      * Warning !!!!!!!!!!!!!!!!!!!!!! <-------------
      * If you need to add settings,
@@ -99,4 +114,10 @@ bool settings_set_ble_name(const char *name, uint8_t len);
 void settings_init_ble_name_config(void);
 uint8_t settings_get_log_level(void);
 void settings_set_log_level(uint8_t level);
+void settings_init_multi_tap_config(void);
+uint8_t settings_get_button_tap_count(char which);
+void settings_set_button_tap_count(char which, uint8_t taps);
+uint16_t settings_get_multi_tap_threshold_ms(void);
+void settings_set_multi_tap_threshold_ms(uint16_t ms);
+bool is_settings_button_function_valid(uint8_t function);
 #endif

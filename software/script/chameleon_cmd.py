@@ -2090,6 +2090,28 @@ class ChameleonCMD:
         return self.device.send_cmd_sync(Command.SET_SLEEP_TIMEOUT, data)
 
     @expect_response(Status.SUCCESS)
+    def get_multi_tap_config(self):
+        """
+        Get the multi-tap button config: (taps_a, taps_b, threshold_ms)
+        """
+        resp = self.device.send_cmd_sync(Command.GET_MULTI_TAP_CONFIG)
+        if resp.status == Status.SUCCESS:
+            if len(resp.data) != 4:
+                raise UnexpectedResponseError(
+                    f"malformed multi-tap config response: expected 4 bytes, got {len(resp.data)}"
+                )
+            resp.parsed = struct.unpack('<BBH', resp.data)
+        return resp
+
+    @expect_response(Status.SUCCESS)
+    def set_multi_tap_config(self, taps_a: int, taps_b: int, threshold_ms: int):
+        """
+        Set the multi-tap button config (tap counts 1..5, threshold 50..1000 ms)
+        """
+        data = struct.pack('<BBH', taps_a, taps_b, threshold_ms)
+        return self.device.send_cmd_sync(Command.SET_MULTI_TAP_CONFIG, data)
+
+    @expect_response(Status.SUCCESS)
     def reset_settings(self):
         """
         Reset settings stored in flash memory

@@ -2083,11 +2083,22 @@ class HWButtonSettingsGet(DeviceRequiredUnit):
                 button_list = [ButtonType.B]
             else:
                 button_list = list(ButtonType)
+            # The tap count is a separate setting; old firmware doesn't have it.
+            tap_counts = None
+            if not args.long:
+                try:
+                    taps_a, taps_b, _ = self.cmd.get_multi_tap_config()
+                    tap_counts = {ButtonType.A: taps_a, ButtonType.B: taps_b}
+                except chameleon_com.CMDInvalidException:
+                    tap_counts = None
             for button in button_list:
                 if not args.long:
                     resp = self.cmd.get_button_press_config(button)
                     button_fn = ButtonPressFunction(resp)
-                    print(f"{color_string((CG, f'{button.name} short'))}: {button_fn}")
+                    label = f"{button.name} short"
+                    if tap_counts is not None:
+                        label += f" ({multitap_count_text(tap_counts[button])})"
+                    print(f"{color_string((CG, label))}: {button_fn}")
                 if not args.short:
                     resp_long = self.cmd.get_long_button_press_config(button)
                     button_long_fn = ButtonPressFunction(resp_long)
@@ -2095,6 +2106,179 @@ class HWButtonSettingsGet(DeviceRequiredUnit):
                         f"{color_string((CG, f'{button.name} long'))}: {button_long_fn}"
                     )
                 print("")
+
+
+MULTITAP_TAP_NAMES = ["single", "double", "triple", "quadruple", "quintuple"]
+MULTITAP_COUNT_BY_NAME = {name: i + 1 for i, name in enumerate(MULTITAP_TAP_NAMES)}
+MULTITAP_NAME_BY_COUNT = {i + 1: name for i, name in enumerate(MULTITAP_TAP_NAMES)}
+MULTITAP_MIN_THRESHOLD_MS = 50
+MULTITAP_MAX_THRESHOLD_MS = 1000
+MULTITAP_DEFAULT_THRESHOLD_MS = 250
+
+
+def multitap_count_text(count: int) -> str:
+    """'1 tap' / '2 taps'"""
+    return f"{count} tap" + ("" if count == 1 else "s")
+
+
+def multitap_tap_label(count: int) -> str:
+    """'single (1 tap)' / 'double (2 taps)'"""
+    name = MULTITAP_NAME_BY_COUNT.get(count)
+    text = multitap_count_text(count)
+    return f"{name} ({text})" if name else text
+
+
+@hw_settings.command("multitap")
+class HWSettingsMultiTap(DeviceRequiredUnit):
+
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = (
+            "Get or set the multi-tap button config. A button's short-press "
+            "function runs only after the requested number of taps (1-5). "
+            "Consecutive taps must be no more than the threshold apart "
+            f"({MULTITAP_MIN_THRESHOLD_MS}-{MULTITAP_MAX_THRESHOLD_MS} ms, "
+            f"factory default {MULTITAP_DEFAULT_THRESHOLD_MS} ms)."
+        )
+        tap_help = (
+            "Taps needed for the button's short-press function: "
+            + ", ".join(MULTITAP_TAP_NAMES)
+            + " - unchanged if omitted (factory default: single)"
+        )
+        parser.add_argument(
+            "--button-a-taps",
+            type=str,
+            required=False,
+            metavar="TAPS",
+            choices=MULTITAP_TAP_NAMES,
+            help=tap_help,
+        )
+        parser.add_argument(
+            "--button-b-taps",
+            type=str,
+            required=False,
+            metavar="TAPS",
+            choices=MULTITAP_TAP_NAMES,
+            help=tap_help,
+        )
+        parser.add_argument(
+            "--threshold-ms",
+            type=int,
+            required=False,
+            metavar="MS",
+            help=(
+                "Maximum gap between two taps, in milliseconds "
+                f"({MULTITAP_MIN_THRESHOLD_MS}-{MULTITAP_MAX_THRESHOLD_MS}, "
+                f"factory default {MULTITAP_DEFAULT_THRESHOLD_MS}); "
+                "rounded down to a multiple of 10 ms"
+            ),
+        )
+        return parser
+
+    def on_exec(self, args: argparse.Namespace):
+        # Validate locally before touching the device.
+        snapped_threshold = None
+        if args.threshold_ms is not None:
+            if not (
+                MULTITAP_MIN_THRESHOLD_MS <= args.threshold_ms <= MULTITAP_MAX_THRESHOLD_MS
+            ):
+                print(
+                    color_string(
+                        (
+                            CR,
+                            f"The --threshold-ms value must be between "
+                            f"{MULTITAP_MIN_THRESHOLD_MS} and "
+                            f"{MULTITAP_MAX_THRESHOLD_MS} milliseconds "
+                            f"(got {args.threshold_ms}).",
+                        )
+                    )
+                )
+                return
+            # The device stores the threshold in units of 10 ms, so snap the
+            # request down to a multiple of 10 ms: what we print is then
+            # exactly what the device stores.
+            snapped_threshold = (args.threshold_ms // 10) * 10
+            if not (
+                MULTITAP_MIN_THRESHOLD_MS
+                <= snapped_threshold
+                <= MULTITAP_MAX_THRESHOLD_MS
+            ):
+                print(
+                    color_string(
+                        (
+                            CR,
+                            f"The --threshold-ms value {args.threshold_ms} ms rounds down "
+                            f"to {snapped_threshold} ms, which is outside the valid range "
+                            f"of {MULTITAP_MIN_THRESHOLD_MS}-"
+                            f"{MULTITAP_MAX_THRESHOLD_MS} ms. Use --threshold-ms with a "
+                            f"value between {MULTITAP_MIN_THRESHOLD_MS} and "
+                            f"{MULTITAP_MAX_THRESHOLD_MS}.",
+                        )
+                    )
+                )
+                return
+
+        try:
+            cur_a, cur_b, cur_threshold = self.cmd.get_multi_tap_config()
+        except chameleon_com.CMDInvalidException:
+            print("Multi-tap settings are not supported by the current firmware.")
+            return
+
+        new_a = (
+            MULTITAP_COUNT_BY_NAME[args.button_a_taps]
+            if args.button_a_taps is not None
+            else cur_a
+        )
+        new_b = (
+            MULTITAP_COUNT_BY_NAME[args.button_b_taps]
+            if args.button_b_taps is not None
+            else cur_b
+        )
+        new_threshold = (
+            snapped_threshold if snapped_threshold is not None else cur_threshold
+        )
+
+        changed = (new_a, new_b, new_threshold) != (cur_a, cur_b, cur_threshold)
+        if changed:
+            # All-or-nothing: the device stores the three values as one config.
+            try:
+                self.cmd.set_multi_tap_config(new_a, new_b, new_threshold)
+            except chameleon_com.CMDInvalidException:
+                print(
+                    "Multi-tap settings are not supported by the current firmware."
+                )
+                return
+            except UnexpectedResponseError:
+                print(
+                    color_string(
+                        (
+                            CR,
+                            "The device rejected the multi-tap settings; "
+                            "nothing was changed.",
+                        )
+                    )
+                )
+                return
+
+        print(" - Multi-tap button configuration:")
+        print(
+            f"   {color_string((CG, 'Button A taps'))} : {multitap_tap_label(new_a)}"
+            + (f" (was {multitap_tap_label(cur_a)})" if new_a != cur_a else "")
+        )
+        print(
+            f"   {color_string((CG, 'Button B taps'))} : {multitap_tap_label(new_b)}"
+            + (f" (was {multitap_tap_label(cur_b)})" if new_b != cur_b else "")
+        )
+        print(
+            f"   {color_string((CG, 'Tap threshold'))} : {new_threshold} ms"
+            + (
+                f" (was {cur_threshold} ms)"
+                if new_threshold != cur_threshold
+                else ""
+            )
+        )
+        if changed:
+            print(color_string((CY, "Do not forget to store your settings in flash!")))
 
 
 @hw_settings.command("blekey")
