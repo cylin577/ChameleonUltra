@@ -36,18 +36,18 @@ jobs:
           - device: lite
             variant: recovery
             standalone_flags: ''
-          # Standalone images: every mode that device supports compiled in.
+          # Standalone images: subset of modes that fit in RAM.
           # Ultra-only modes (reader / RC522 based) are omitted for lite: the
           # modes that declare their Ultra-only dependency guard out cleanly,
           # but mode_relay.c includes rc522.h and calls pcd_14a_reader_*,
           # which the lite build never compiles.
+          # Dropped for RAM: RELAY (RC522+BLE), GDB_GATEWAY (RSP), U2F (micro-ecc),
+          # AUTOCLONE/READ_REPLAY/DICT_CHECK (mf1_dict is large).
           - device: ultra
             variant: standalone
             standalone_flags: >-
-              STANDALONE_AUTHTRACE=1 STANDALONE_SLOT_CYCLE=1 STANDALONE_AUTOCLONE=1
-              STANDALONE_READ_REPLAY=1 STANDALONE_DICT_CHECK=1 STANDALONE_EMUL_TRACE=1
-              STANDALONE_NFC_CANARY=1 STANDALONE_HF14A_TAP_SNIFF=1 STANDALONE_RELAY=1
-              STANDALONE_GDB_GATEWAY=1 STANDALONE_U2F=1
+              STANDALONE_AUTHTRACE=1 STANDALONE_SLOT_CYCLE=1 STANDALONE_EMUL_TRACE=1
+              STANDALONE_NFC_CANARY=1 STANDALONE_HF14A_TAP_SNIFF=1
           - device: lite
             variant: standalone
             standalone_flags: >-
