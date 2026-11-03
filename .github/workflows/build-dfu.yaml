@@ -41,13 +41,14 @@ jobs:
           # modes that declare their Ultra-only dependency guard out cleanly,
           # but mode_relay.c includes rc522.h and calls pcd_14a_reader_*,
           # which the lite build never compiles.
-          # Dropped for RAM: RELAY (RC522+BLE), GDB_GATEWAY (RSP), U2F (micro-ecc),
-          # AUTOCLONE/READ_REPLAY/DICT_CHECK (mf1_dict is large).
+          # Dropped for RAM: RELAY (RC522+BLE), GDB_GATEWAY (RSP), AUTOCLONE/DICT_CHECK (mf1_dict is large).
+          # U2F (micro-ecc) and READ_REPLAY added back — fit within RAM budget.
           - device: ultra
             variant: standalone
             standalone_flags: >-
               STANDALONE_AUTHTRACE=1 STANDALONE_SLOT_CYCLE=1 STANDALONE_EMUL_TRACE=1
               STANDALONE_NFC_CANARY=1 STANDALONE_HF14A_TAP_SNIFF=1
+              STANDALONE_U2F=1 STANDALONE_READ_REPLAY=1
           - device: lite
             variant: standalone
             standalone_flags: >-
