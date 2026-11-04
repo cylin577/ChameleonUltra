@@ -38,3 +38,13 @@ shasum -a 256 ultra-application.uf2
 ```
 
 GitHub shows the SHA256 digest of each attached asset on the release page.
+
+Every published DFU package is checked in CI (init hash, ECDSA signature, and
+the signing key against the public key the bootloader trusts) before it is
+attached. To check a downloaded package yourself:
+
+```
+python3 firmware/tools/dfu_pkg_check.py --check ultra-dfu-app.zip
+```
+
+The tool prints `PASS` for the package when all of those checks pass.

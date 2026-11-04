@@ -86,6 +86,30 @@ SoftDevice compatibility gate for SoftDevice-type updates, and the DFU package
 signature (`NRF_DFU_REQUIRE_SIGNED_APP_UPDATE = 1`). Packages must be signed
 with the fork's DFU key.
 
+## DFU package verification
+
+The init packet hash is stored byte-reversed: the bootloader reverses the 32
+stored bytes before comparing them with the SHA-256 of the received image
+(`nrf_dfu_validation_hash_ok`). A package that stores a plain SHA-256 digest
+therefore fails with `VerificationFailed` (0x0C), and the check runs only after
+the whole image has been transferred.
+
+CI verifies every package it builds — init hash, ECDSA signature, and that the
+signing key matches the public key the bootloader trusts — with
+`firmware/tools/dfu_pkg_check.py`, and refuses to publish a package that fails.
+Check a downloaded package yourself with:
+
+```bash
+python3 firmware/tools/dfu_pkg_check.py --check ultra-dfu-app.zip
+```
+
+For pre-SDK-15 bootloaders, which compare the stored hash without reversing
+it, `python3 firmware/tools/dfu_pkg_check.py --legacy out.zip in.zip` writes a
+compatibility variant with a plain digest and a fresh signature. That mode is
+**experimental**: its byte order was derived from the pre-SDK-15 rule, it has
+not been validated against a real pre-SDK-15 bootloader, and CI does not
+produce or publish such packages.
+
 ## Updating the bootloader from the app (`hw bl push`)
 
 Secure DFU rejects a bootloader image on units that still run an older UF2

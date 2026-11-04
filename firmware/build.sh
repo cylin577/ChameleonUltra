@@ -103,6 +103,12 @@ PY
       --sd-req ${softdevice_id} \
       ${device_type}-dfu-app.zip
 
+    # Verify the packages before anything else can use them. The tool checks
+    # the init hash, the ECDSA signature and that the signing key matches the
+    # public key the bootloader trusts. A failing check aborts the build
+    # (set -e), so a bad package can never reach a release.
+    python3 ../tools/dfu_pkg_check.py --check ${device_type}-dfu-bl.zip ${device_type}-dfu-full.zip ${device_type}-dfu-app.zip
+
     nrfutil nrf5sdk-tools settings generate \
       --family NRF52840 \
       --application application.hex --application-version $application_version \
