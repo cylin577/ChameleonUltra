@@ -297,9 +297,13 @@ class ChameleonCLI:
             self.exec_cmd(cmd_str)
 
 
-if __name__ == "__main__":
+def main():
     if sys.version_info < (3, 9):
         raise Exception("This script requires at least Python 3.9")
     colorama.init(autoreset=True)
     chameleon_cli_unit.check_tools()
     ChameleonCLI().startCLI()
+
+
+if __name__ == "__main__":
+    main()
