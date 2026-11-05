@@ -177,12 +177,12 @@ both over USB:
 ./flash-uf2-app.sh
 ```
 
-Waits for the `CHAMELEON` drive (enter UF2 mode: hold **B**, plug USB), copies
+Waits for the `CHAMELEON` drive (enter UF2 mode: hold **A**, plug USB), copies
 `ultra-application.uf2` onto it, device resets into the app:
 
 ```
 Waiting for CHAMELEON UF2 drive...
-Enter UF2 mode: hold B and plug USB
+Enter UF2 mode: hold A and plug USB
 Found at /run/media/<user>/CHAMELEON — flashing objects/ultra-application.uf2 ...
 Done. Device will reset into application.
 ```
@@ -195,7 +195,7 @@ Done. Device will reset into application.
 
 Unplug and replug **without** holding B — the device boots normally.
 
-To confirm the UF2 path, enter UF2 mode (hold **B**, plug USB). The `CHAMELEON`
+To confirm the UF2 path, enter UF2 mode (hold **A**, plug USB). The `CHAMELEON`
 drive mounts (auto on most Linux desktops; Finder/File Explorer on macOS/Windows);
 `dmesg` shows a `RRG ChameleonUltra` USB Mass Storage device. `INFO_UF2.TXT`
 present with no `FAIL.TXT` means the last flash was clean.
@@ -204,11 +204,11 @@ present with no `FAIL.TXT` means the last flash was clean.
 
 ## Step 7 — future updates
 
-**Enter UF2 mode** by cold-boot + hold **B** + plug, or from the running app:
+**Enter UF2 mode** by cold-boot + hold **A** + plug, or from the running app:
 
 ```bash
-$ python3 software/script/chameleon_cli_main.py
-[chameleon] hw dfu
+$ chameleonultra
+[Offline] phreakbyte --> hw dfu
 ```
 
 `hw dfu` sends `ENTER_BOOTLOADER` and reboots into the composite bootloader.

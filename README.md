@@ -96,12 +96,19 @@ Details and the recovery-image build are documented in
 
 ## Client
 
-The Python CLI lives in `software/script`.
+The Python CLI lives in `software/script`. Install it as a uv tool:
 
 ```
-cd software/script
-python3 -m pip install -r requirements.txt
-python3 chameleon_cli_main.py
+cd software
+uv tool install --editable .
+```
+
+This puts a `chameleonultra` command on your `PATH`. The install is editable,
+so it resolves `script/` in place — keep the checkout around, it is not a
+standalone binary.
+
+```
+chameleonultra
 ```
 
 Connect over USB or BLE from the `hw connect` command. Run `hw version` to see

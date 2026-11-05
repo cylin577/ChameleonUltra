@@ -4,7 +4,7 @@
 > [Legal / responsible use](../README.md#legal--responsible-use) in the
 > top-level README.
 
-Complete reference for the Phreakbyte edition ChameleonUltra client (`chameleon_cli_main.py`), auto-generated from the live CLI parser: 44 command groups, 219 commands.
+Complete reference for the Phreakbyte edition ChameleonUltra client (`chameleonultra`), auto-generated from the live CLI parser: 44 command groups, 219 commands.
 
 Notation: `<...>` are values you supply. Each option lists its flags, help, allowed `choices`, whether it is `required`, and its `default`. Run any command with `-h` in the client for the same information live.
 

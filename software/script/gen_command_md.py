@@ -117,7 +117,7 @@ def main():
     )
     print(
         "Complete reference for the Phreakbyte edition ChameleonUltra client "
-        "(`chameleon_cli_main.py`), auto-generated from the live CLI parser: "
+        "(`chameleonultra`), auto-generated from the live CLI parser: "
         f"{ngroups} command groups, {ncmds} commands.\n"
     )
     print(

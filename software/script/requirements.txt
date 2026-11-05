@@ -1,3 +1,6 @@
+# Legacy mirror of the runtime deps in ../pyproject.toml.
+# ../pyproject.toml + ../uv.lock are the source of truth; keep these in sync.
 pyserial==3.5
 colorama==0.4.6
 prompt-toolkit==3.0.39
+cryptography>=47.0.0

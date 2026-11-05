@@ -2,18 +2,22 @@
 
 ## Package management
 
-- Uses `uv` (see `software/pyproject.toml`, `software/uv.lock`). Runtime deps: colorama, prompt-toolkit, pyserial. Dev deps: ruff, pyrefly.
+- Uses `uv` (see `software/pyproject.toml`, `software/uv.lock`). Runtime deps: colorama, prompt-toolkit, pyserial, cryptography. Dev deps: ruff, pyrefly.
 ```
 cd software && uv sync
 ```
 
+The package is built with hatchling; `script/` is installed as top-level modules and the `chameleonultra` entry point maps to `chameleon_cli_main:main`.
+
 ## Run CLI
 
 ```
-cd software/script && uv run --project .. python chameleon_cli_main.py
-# or legacy
-cd software/script && python3 -m pip install -r requirements.txt && python3 chameleon_cli_main.py
+cd software && uv tool install --editable .   # installs `chameleonultra` on PATH
+chameleonultra
 ```
+
+- The install is editable, so the tool reads `software/script/` live: Python edits take effect immediately, and `script/bin/` (native helpers) plus `script/dictionaries/` resolve in place. It needs the checkout to stay put — it is not a self-contained binary. Re-run the install with `--force` only if the checkout moves.
+- Legacy (no uv): `cd software/script && python3 -m pip install -r requirements.txt && python3 chameleon_cli_main.py`.
 
 - Connect device first (`hw connect`); most tests/commands require a device.
 

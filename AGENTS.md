@@ -25,8 +25,8 @@ cd firmware/application && make -j
 cd firmware/bootloader && make -j
 
 # software
-cd software && uv sync
-cd software/script && uv run --project .. python chameleon_cli_main.py
+cd software && uv sync                        # dev deps for lint/tests
+cd software && uv tool install --editable .   # installs the `chameleonultra` CLI
 
 # tests
 cd software/script && uv run --project .. python -m unittest discover -s tests
