@@ -14,7 +14,7 @@ hw log clear
 ```
 
 The default level is `off`: nothing is recorded and nothing is written to
-flash. After a crash or odd behaviour, enter UF2 mode (hold B, plug USB) and
+flash. After a crash or odd behaviour, enter UF2 mode (hold A, plug USB) and
 copy `LOG.TXT` off the drive. It only appears when the log holds data.
 
 The RTT output is unchanged (still INFO and above); the level only controls

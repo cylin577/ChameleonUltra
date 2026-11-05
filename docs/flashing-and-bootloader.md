@@ -44,7 +44,7 @@ Consequences:
 ```bash
 cd firmware
 ./build.sh
-./flash-uf2-app.sh      # hold B, plug USB to enter UF2 mode; copies *-application.uf2
+./flash-uf2-app.sh      # hold A, plug USB to enter UF2 mode; copies *-application.uf2
 ```
 
 `flash-uf2-app.sh` waits for the `CHAMELEON` UF2 drive, copies the application
