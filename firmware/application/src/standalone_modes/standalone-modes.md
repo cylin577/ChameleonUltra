@@ -56,6 +56,13 @@ hw settings btnpress -b -l -f STANDALONE_ACTION   # B long: run
 hw settings store
 ```
 
+A button can also bind a function to a tap count (`hw settings btnpress -a
+--multitap --taps 3 -f STANDALONE_ACTION`). While any 2-5 tap binding is set
+on a button, that button's single tap waits for the inter-tap threshold
+(default 250 ms) before it runs, so a short-press bound standalone action on
+the same button is delayed by that threshold. When a higher tap count is bound
+on the same button, the lower one also waits for the threshold.
+
 The functions do nothing while no standalone mode is selected. A button bound to
 one of them no longer does its previous job (cycling slots, battery, clone), so
 rebind it when you stop using standalone modes.

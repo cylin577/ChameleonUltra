@@ -5,163 +5,382 @@
 #include "../app_button_tap.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static int g_fail = 0, g_checks = 0;
 #define CHECK(c) do { g_checks++; if (!(c)) { g_fail++; \
     printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); } } while (0)
 
-#define THRESHOLD_MS 250u
-
 /* RTC1 counter width (24 bit) and the tick rate of this project
  * (APP_TIMER_CONFIG_RTC_FREQUENCY == 1 -> 32768 / 2 = 16384 Hz). */
-#define RTC_COUNTER_MASK 0x00FFFFFFu
 #define TICKS_PER_SECOND 16384u
 
-/* Same wrap-safe subtraction the SDK's app_timer_cnt_diff_compute() does. */
-static uint32_t diff_ticks(uint32_t ticks_to, uint32_t ticks_from) {
-    return (ticks_to - ticks_from) & RTC_COUNTER_MASK;
-}
+/* No multi-tap binding at all: the 1-tap action runs immediately. */
+static const uint8_t NO_BINDINGS[4] = {0, 0, 0, 0};
 
-/* required == 1 fires on the very first tap (current behaviour) */
-static void test_required_one_fires_immediately(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 1, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
-}
+/* A button with any 2..5 binding set must wait for the threshold before its
+ * 1-tap action runs, otherwise a 2-tap press would fire the 1-tap action
+ * first. These tables cover the interesting slots. */
+static const uint8_t BIND_AT_2[4] = {4, 0, 0, 0};
+static const uint8_t BIND_AT_3[4] = {0, 4, 0, 0};
+static const uint8_t BIND_AT_4[4] = {0, 0, 4, 0};
+static const uint8_t BIND_AT_5[4] = {0, 0, 0, 4};
+/* Two slots on the same button: the lower one has to wait for the threshold,
+ * otherwise the higher slot could never be reached. */
+static const uint8_t BIND_AT_2_AND_3[4] = {4, 5, 0, 0};
+static const uint8_t BIND_AT_4_AND_5[4] = {0, 0, 4, 5};
 
-/* required == 0 is treated like required == 1 */
-static void test_zero_required_behaves_like_one(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 0, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
-}
-
-/* the first tap of a sequence ignores the elapsed value entirely */
-static void test_first_tap_ignores_elapsed(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(1000000, 0, 2, THRESHOLD_MS);
-    CHECK(!r.fire);
+/* Without any 2..5 binding the short press fires on the first release. */
+static void test_first_tap_without_binding_fires_short(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, NO_BINDINGS);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_SHORT);
+    CHECK(r.function == 1);
     CHECK(r.count == 1);
+    /* The sequence is complete: it is reset by the state machine itself. */
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
 }
 
-/* a gap exactly equal to the threshold still continues the sequence */
-static void test_gap_exactly_threshold_continues(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 2, THRESHOLD_MS);
-    CHECK(!r.fire);
+/* With a 2..5 binding the 1-tap action is deferred until the threshold. */
+static void test_first_tap_with_binding_waits(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
     CHECK(r.count == 1);
-
-    r = app_button_tap_on_short_press(THRESHOLD_MS, r.count, 2, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
+    CHECK(!st.fired);
 }
 
-/* a gap one ms over the threshold restarts the sequence */
-static void test_gap_one_ms_over_threshold_restarts(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 2, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 1);
-
-    r = app_button_tap_on_short_press(THRESHOLD_MS + 1u, r.count, 2, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 1);
+/* A disabled short press with a multi-tap binding still waits (and runs
+ * nothing at the end of the sequence). */
+static void test_first_tap_with_binding_waits_when_short_disabled(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 0, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(!st.fired);
 }
 
-/* required == 2 fires on the 2nd tap, 200 ms after the 1st */
-static void test_double_tap(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 2, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 1);
-
-    r = app_button_tap_on_short_press(200, r.count, 2, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
-}
-
-/* required == 3 fires on the 3rd tap only */
-static void test_triple_tap(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 3, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 1);
-
-    r = app_button_tap_on_short_press(100, r.count, 3, THRESHOLD_MS);
-    CHECK(!r.fire);
+/* The 2-tap binding fires on the second release. */
+static void test_second_tap_fires_binding(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r.function == 4);
     CHECK(r.count == 2);
-
-    r = app_button_tap_on_short_press(100, r.count, 3, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
+    CHECK(st.fired);
 }
 
-/* required == 5 fires on the 5th tap only */
-static void test_five_taps(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 5, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 1);
-
-    r = app_button_tap_on_short_press(100, r.count, 5, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 2);
-
-    r = app_button_tap_on_short_press(100, r.count, 5, THRESHOLD_MS);
-    CHECK(!r.fire);
+/* The 3-tap binding fires on the third release (the 2-tap slot is free). */
+static void test_third_tap_fires_binding(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r.function == 4);
     CHECK(r.count == 3);
+    CHECK(st.fired);
+}
 
-    r = app_button_tap_on_short_press(100, r.count, 5, THRESHOLD_MS);
-    CHECK(!r.fire);
+/* The 5-tap binding fires on the fifth release. */
+static void test_fifth_tap_fires_binding(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_5);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_5);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r.function == 4);
+    CHECK(r.count == 5);
+    CHECK(st.fired);
+}
+
+/* The 4-tap binding fires on the fourth release. */
+static void test_fourth_tap_fires_binding(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_4);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r.function == 4);
     CHECK(r.count == 4);
-
-    r = app_button_tap_on_short_press(100, r.count, 5, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
+    CHECK(st.fired);
 }
 
-/* a gap far over the threshold restarts the sequence */
-static void test_stale_gap_restarts(void) {
-    app_button_tap_result_t r = app_button_tap_on_short_press(0, 0, 2, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 1);
-
-    r = app_button_tap_on_short_press(100000, r.count, 2, THRESHOLD_MS);
-    CHECK(!r.fire);
-    CHECK(r.count == 1);
+/* The 4-tap and the 5-tap slot are bound: a 4-tap press runs the 4-tap
+ * action when the threshold expires (the 5-tap slot may still come). */
+static void test_four_taps_run_the_fourth_slot_at_the_timeout(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    /* the 5-tap slot may still come: the 4-tap action has to wait */
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(r.count == 4);
+    CHECK(!st.fired);
+    app_button_tap_result_t t = app_button_tap_timeout(&st, 1, BIND_AT_4_AND_5);
+    CHECK(t.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(t.function == 4);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
 }
 
-/* The caller owns the measurement. This mirrors the firmware: the gap runs
- * from the previous tap's RELEASE to this tap's PRESS, is measured in ticks
- * with the SDK's wrap-safe diff, and the hold time is not part of it. */
-static uint32_t caller_elapsed_ms(uint32_t press_ticks, uint32_t prev_release_ticks, uint8_t counter) {
-    if (counter == 0) {
-        return 0;
+/* The 4-tap and the 5-tap slot are bound: a 5-tap press runs the 5-tap
+ * action on the fifth release. */
+static void test_five_taps_reach_the_fifth_slot(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_4_AND_5);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r.function == 5);
+    CHECK(r.count == 5);
+    CHECK(st.fired);
+}
+
+/* The tap counter never runs past 5. */
+static void test_count_clamps_at_five(void) {
+    app_button_tap_state_t st = {0, false};
+    for (int i = 0; i < 5; i++) {
+        app_button_tap_on_short_press(&st, 0, NO_BINDINGS);
     }
-    return app_button_tap_elapsed_ms(diff_ticks(press_ticks, prev_release_ticks), TICKS_PER_SECOND);
+    CHECK(st.count == 5);
+    app_button_tap_on_short_press(&st, 0, NO_BINDINGS);
+    CHECK(st.count == 5);
 }
 
-static void test_caller_measures_release_to_press(void) {
-    uint32_t tap1_release = 100000;
-    uint32_t tap2_press = tap1_release + (TICKS_PER_SECOND * 125u / 1000u); /* 125 ms gap */
-    uint32_t tap2_release = tap2_press + (TICKS_PER_SECOND / 2);            /* 500 ms hold */
-
-    uint32_t elapsed = caller_elapsed_ms(tap2_press, tap1_release, 1);
-    CHECK(elapsed == 125);                                                  /* hold time excluded */
-    CHECK(elapsed != app_button_tap_elapsed_ms(diff_ticks(tap2_release, tap1_release), TICKS_PER_SECOND));
-
-    app_button_tap_result_t r = app_button_tap_on_short_press(elapsed, 1, 2, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
+/* A tap count without a binding runs nothing and keeps the sequence open. */
+static void test_unbound_tap_count_does_not_fire(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(r.count == 2);
+    CHECK(!st.fired);
 }
 
-static void test_caller_gap_survives_counter_wrap(void) {
-    /* the previous release sits just below the 24 bit counter wrap and the
-     * next press lands just after it */
-    uint32_t tap1_release = 0x00FFFFF0u;
-    uint32_t tap2_press = 0x00000020u;   /* 48 ticks (~2.9 ms) later, wrapped */
+/* Once a binding fired, the sequence is consumed: a further tap inside the
+ * window triggers nothing. */
+static void test_fired_sequence_ignores_extra_taps(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(r.count == 3);
+    CHECK(st.fired);
+}
 
-    uint32_t elapsed = caller_elapsed_ms(tap2_press, tap1_release, 1);
-    CHECK(elapsed <= 5);
-    CHECK(elapsed <= THRESHOLD_MS);
+/* A single tap that never fired runs the short-press function when the
+ * threshold expires, and the sequence is reset. */
+static void test_timeout_single_tap_runs_short(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_result_t r = app_button_tap_timeout(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_SHORT);
+    CHECK(r.function == 1);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
 
-    app_button_tap_result_t r = app_button_tap_on_short_press(elapsed, 1, 2, THRESHOLD_MS);
-    CHECK(r.fire);
-    CHECK(r.count == 0);
+/* A sequence that already fired runs nothing when it expires. */
+static void test_timeout_after_fire_runs_nothing(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_result_t r = app_button_tap_timeout(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* A multi-tap sequence that matched no binding runs nothing when it
+ * expires (the user aimed at a multi-tap gesture). */
+static void test_timeout_multi_tap_never_fired_runs_nothing(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_result_t r = app_button_tap_timeout(&st, 1, BIND_AT_3);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* The timeout resets the sequence so the next tap starts a fresh one. */
+static void test_timeout_resets_state(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_result_t r = app_button_tap_timeout(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_SHORT);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* A disabled short press runs nothing when the sequence expires. */
+static void test_timeout_with_disabled_short_runs_nothing(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 0, BIND_AT_2);
+    app_button_tap_result_t r = app_button_tap_timeout(&st, 0, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(!st.fired);
+}
+
+/* Both the 2-tap and the 3-tap slot are bound: on a 3-tap press the 3-tap
+ * action runs and the 2-tap action must not. */
+static void test_three_taps_reach_the_third_slot(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_result_t r1 = app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    CHECK(r1.run == APP_BUTTON_TAP_RUN_NONE);
+    app_button_tap_result_t r2 = app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    /* the 3-tap slot may still come: the 2-tap action has to wait */
+    CHECK(r2.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(r2.count == 2);
+    CHECK(!st.fired);
+    app_button_tap_result_t r3 = app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    CHECK(r3.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r3.function == 5);
+    CHECK(r3.count == 3);
+    CHECK(st.fired);
+}
+
+/* Both the 2-tap and the 3-tap slot are bound: a 2-tap press runs the 2-tap
+ * action when the threshold expires (the final tap count is 2). */
+static void test_two_taps_run_the_second_slot_at_the_timeout(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(r.count == 2);
+    CHECK(!st.fired);
+    app_button_tap_result_t t = app_button_tap_timeout(&st, 1, BIND_AT_2_AND_3);
+    CHECK(t.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(t.function == 4);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* Only the 2-tap slot is bound: the action runs immediately on the 2nd tap
+ * (no higher slot can still come). */
+static void test_only_second_slot_bound_fires_immediately(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r.function == 4);
+    CHECK(r.count == 2);
+    CHECK(st.fired);
+}
+
+/* Only the 3-tap slot is bound: a 2-tap press runs nothing at all. */
+static void test_only_third_slot_bound_two_taps_run_nothing(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(r.count == 2);
+    CHECK(!st.fired);
+    app_button_tap_result_t t = app_button_tap_timeout(&st, 1, BIND_AT_3);
+    CHECK(t.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* Only the 3-tap slot is bound: the 3rd tap runs it right away. */
+static void test_only_third_slot_bound_fires_on_the_third_tap(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_3);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_BINDING);
+    CHECK(r.function == 4);
+    CHECK(r.count == 3);
+    CHECK(st.fired);
+}
+
+/* Only the 2-tap slot is bound: a single tap still runs the short-press
+ * function, but only when the threshold expires. */
+static void test_only_second_slot_bound_single_tap_runs_short_at_timeout(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_result_t r = app_button_tap_on_short_press(&st, 1, BIND_AT_2);
+    CHECK(r.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(r.count == 1);
+    app_button_tap_result_t t = app_button_tap_timeout(&st, 1, BIND_AT_2);
+    CHECK(t.run == APP_BUTTON_TAP_RUN_SHORT);
+    CHECK(t.function == 1);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* Without any binding the short press runs on every tap: the state is reset
+ * so the next tap starts a fresh 1-tap gesture that fires again immediately. */
+static void test_short_press_without_bindings_resets_the_state(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_result_t r1 = app_button_tap_on_short_press(&st, 1, NO_BINDINGS);
+    CHECK(r1.run == APP_BUTTON_TAP_RUN_SHORT);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+    app_button_tap_result_t r2 = app_button_tap_on_short_press(&st, 1, NO_BINDINGS);
+    CHECK(r2.run == APP_BUTTON_TAP_RUN_SHORT);
+    CHECK(r2.function == 1);
+    CHECK(r2.count == 1);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* A sequence whose binding already ran runs nothing when it expires. */
+static void test_timeout_after_a_fired_binding_runs_nothing(void) {
+    app_button_tap_state_t st = {0, false};
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    app_button_tap_on_short_press(&st, 1, BIND_AT_2_AND_3);
+    CHECK(st.fired);
+    app_button_tap_result_t t = app_button_tap_timeout(&st, 1, BIND_AT_2_AND_3);
+    CHECK(t.run == APP_BUTTON_TAP_RUN_NONE);
+    CHECK(st.count == 0);
+    CHECK(!st.fired);
+}
+
+/* pack/unpack is lossless. */
+static void test_pack_unpack_round_trip(void) {
+    uint8_t fn[8] = {0, 1, 2, 3, 4, 5, 6, 9};
+    uint8_t packed[4];
+    uint8_t out[8];
+    app_button_tap_pack(fn, packed);
+    app_button_tap_unpack(packed, out);
+    CHECK(memcmp(fn, out, sizeof(fn)) == 0);
+    uint8_t zero[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    uint8_t packed_zero[4];
+    app_button_tap_pack(zero, packed_zero);
+    CHECK(packed_zero[0] == 0 && packed_zero[1] == 0 && packed_zero[2] == 0 && packed_zero[3] == 0);
+}
+
+/* The packed layout is 4 bits per function code, low nibble first. */
+static void test_pack_nibble_layout(void) {
+    uint8_t fn[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    uint8_t packed[4];
+    app_button_tap_pack(fn, packed);
+    CHECK(packed[0] == 0x21);
+    CHECK(packed[1] == 0x43);
+    CHECK(packed[2] == 0x65);
+    CHECK(packed[3] == 0x87);
+}
+
+/* Single slots can be read and written without touching the neighbours. */
+static void test_get_set_binding(void) {
+    uint8_t packed[4] = {0, 0, 0, 0};
+    app_button_tap_set(packed, 0, 4);
+    CHECK(app_button_tap_get(packed, 0) == 4);
+    app_button_tap_set(packed, 7, 9);
+    CHECK(app_button_tap_get(packed, 7) == 9);
+    app_button_tap_set(packed, 3, 7);
+    CHECK(app_button_tap_get(packed, 3) == 7);
+    CHECK(app_button_tap_get(packed, 0) == 4);
 }
 
 /* the tick -> millisecond conversion used by the firmware */
@@ -174,17 +393,34 @@ static void test_elapsed_ms_conversion(void) {
 }
 
 int main(void) {
-    test_required_one_fires_immediately();
-    test_zero_required_behaves_like_one();
-    test_first_tap_ignores_elapsed();
-    test_gap_exactly_threshold_continues();
-    test_gap_one_ms_over_threshold_restarts();
-    test_double_tap();
-    test_triple_tap();
-    test_five_taps();
-    test_stale_gap_restarts();
-    test_caller_measures_release_to_press();
-    test_caller_gap_survives_counter_wrap();
+    test_first_tap_without_binding_fires_short();
+    test_first_tap_with_binding_waits();
+    test_first_tap_with_binding_waits_when_short_disabled();
+    test_second_tap_fires_binding();
+    test_third_tap_fires_binding();
+    test_fifth_tap_fires_binding();
+    test_fourth_tap_fires_binding();
+    test_four_taps_run_the_fourth_slot_at_the_timeout();
+    test_five_taps_reach_the_fifth_slot();
+    test_count_clamps_at_five();
+    test_unbound_tap_count_does_not_fire();
+    test_fired_sequence_ignores_extra_taps();
+    test_timeout_single_tap_runs_short();
+    test_timeout_after_fire_runs_nothing();
+    test_timeout_multi_tap_never_fired_runs_nothing();
+    test_timeout_resets_state();
+    test_timeout_with_disabled_short_runs_nothing();
+    test_three_taps_reach_the_third_slot();
+    test_two_taps_run_the_second_slot_at_the_timeout();
+    test_only_second_slot_bound_fires_immediately();
+    test_only_third_slot_bound_two_taps_run_nothing();
+    test_only_third_slot_bound_fires_on_the_third_tap();
+    test_only_second_slot_bound_single_tap_runs_short_at_timeout();
+    test_short_press_without_bindings_resets_the_state();
+    test_timeout_after_a_fired_binding_runs_nothing();
+    test_pack_unpack_round_trip();
+    test_pack_nibble_layout();
+    test_get_set_binding();
     test_elapsed_ms_conversion();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

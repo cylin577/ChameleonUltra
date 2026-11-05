@@ -2137,26 +2137,58 @@ class ChameleonCMD:
         return self.device.send_cmd_sync(Command.SET_SLEEP_TIMEOUT, data)
 
     @expect_response(Status.SUCCESS)
-    def get_multi_tap_config(self):
+    def get_multi_tap_bindings(self):
         """
-        Get the multi-tap button config: (taps_a, taps_b, threshold_ms)
+        Get the multi-tap button bindings.
+
+        :return: {'a': (fn2, fn3, fn4, fn5), 'b': (fn2, fn3, fn4, fn5),
+                  'threshold_ms': int}
+                 The function codes are @link{ButtonPressFunction} values
+                 (0 = disabled) for tap counts 2..5. A tap count of 1 is the
+                 button's short-press binding and is not part of this reply.
         """
-        resp = self.device.send_cmd_sync(Command.GET_MULTI_TAP_CONFIG)
+        resp = self.device.send_cmd_sync(Command.GET_MULTI_TAP_BINDINGS)
         if resp.status == Status.SUCCESS:
-            if len(resp.data) != 4:
+            if len(resp.data) != 10:
                 raise UnexpectedResponseError(
-                    f"malformed multi-tap config response: expected 4 bytes, got {len(resp.data)}"
+                    f"malformed multi-tap bindings response: expected 10 bytes, got {len(resp.data)}"
                 )
-            resp.parsed = struct.unpack('<BBH', resp.data)
+            resp.parsed = {
+                'a': struct.unpack('<4B', resp.data[0:4]),
+                'b': struct.unpack('<4B', resp.data[4:8]),
+                'threshold_ms': struct.unpack('<H', resp.data[8:10])[0],
+            }
         return resp
 
     @expect_response(Status.SUCCESS)
-    def set_multi_tap_config(self, taps_a: int, taps_b: int, threshold_ms: int):
+    def set_multi_tap_bindings(self, bindings_a, bindings_b, threshold_ms):
         """
-        Set the multi-tap button config (tap counts 1..5, threshold 50..1000 ms)
+        Set the multi-tap button bindings (all 8 slots + the threshold).
+
+        :param bindings_a: 4 function codes for Button A tap counts 2..5
+        :param bindings_b: 4 function codes for Button B tap counts 2..5
+        :param threshold_ms: 50..1000, a multiple of 10
         """
-        data = struct.pack('<BBH', taps_a, taps_b, threshold_ms)
-        return self.device.send_cmd_sync(Command.SET_MULTI_TAP_CONFIG, data)
+        data = struct.pack('<8BH', *bindings_a, *bindings_b, threshold_ms)
+        return self.device.send_cmd_sync(Command.SET_MULTI_TAP_BINDINGS, data)
+
+    def set_multi_tap_binding(self, button: ButtonType, tap_count: int, function: ButtonPressFunction):
+        """
+        Set one multi-tap binding (tap_count 2..5), preserving the others.
+
+        Not decorated with expect_response(): set_multi_tap_bindings() below
+        already checks the device's status, and stacking the decorator would
+        try to read .status from the parsed (None) result.
+        """
+        cur = self.get_multi_tap_bindings()
+        a = list(cur['a'])
+        b = list(cur['b'])
+        slot = tap_count - 2
+        if button == ButtonType.A:
+            a[slot] = int(function)
+        else:
+            b[slot] = int(function)
+        return self.set_multi_tap_bindings(tuple(a), tuple(b), cur['threshold_ms'])
 
     @expect_response(Status.SUCCESS)
     def reset_settings(self):

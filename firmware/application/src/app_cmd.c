@@ -557,23 +557,30 @@ static data_frame_tx_t *cmd_processor_set_sleep_timeout(uint16_t cmd, uint16_t s
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
 
-static data_frame_tx_t *cmd_processor_get_multi_tap_config(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    struct { uint8_t taps_a; uint8_t taps_b; uint16_t threshold_ms; } PACKED payload;
-    payload.taps_a = settings_get_button_tap_count('A');
-    payload.taps_b = settings_get_button_tap_count('B');
+static data_frame_tx_t *cmd_processor_get_multi_tap_bindings(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    uint8_t fn[SETTINGS_MULTI_TAP_BIND_TOTAL];
+    uint8_t payload[SETTINGS_MULTI_TAP_BIND_TOTAL + 2];
+    settings_get_multi_tap_bindings(fn);
+    memcpy(payload, fn, SETTINGS_MULTI_TAP_BIND_TOTAL);
     /* nrf52840 is little endian, so the threshold goes out as-is (LE on the wire) */
-    payload.threshold_ms = settings_get_multi_tap_threshold_ms();
-    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(payload), (uint8_t *)&payload);
+    uint16_t threshold_ms = settings_get_multi_tap_threshold_ms();
+    payload[SETTINGS_MULTI_TAP_BIND_TOTAL] = (uint8_t)(threshold_ms & 0xFF);
+    payload[SETTINGS_MULTI_TAP_BIND_TOTAL + 1] = (uint8_t)(threshold_ms >> 8);
+    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(payload), payload);
 }
 
-static data_frame_tx_t *cmd_processor_set_multi_tap_config(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    if (length != 4) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
-    uint8_t taps_a = data[0];
-    uint8_t taps_b = data[1];
-    uint16_t threshold_ms = (uint16_t)(data[2] | ((uint16_t)data[3] << 8));  /* little endian on the wire */
-    if ((taps_a < SETTINGS_TAP_COUNT_MIN) || (taps_a > SETTINGS_TAP_COUNT_MAX) ||
-        (taps_b < SETTINGS_TAP_COUNT_MIN) || (taps_b > SETTINGS_TAP_COUNT_MAX) ||
-        (threshold_ms < SETTINGS_MULTI_TAP_MIN_MS) || (threshold_ms > SETTINGS_MULTI_TAP_MAX_MS)) {
+static data_frame_tx_t *cmd_processor_set_multi_tap_bindings(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (length != SETTINGS_MULTI_TAP_BIND_TOTAL + 2) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+    for (int i = 0; i < SETTINGS_MULTI_TAP_BIND_TOTAL; i++) {
+        if (!is_settings_button_function_valid(data[i])) {
+            return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+        }
+    }
+    uint16_t threshold_ms = (uint16_t)(data[SETTINGS_MULTI_TAP_BIND_TOTAL] |
+                                       ((uint16_t)data[SETTINGS_MULTI_TAP_BIND_TOTAL + 1] << 8));
+    if ((threshold_ms < SETTINGS_MULTI_TAP_MIN_MS) || (threshold_ms > SETTINGS_MULTI_TAP_MAX_MS)) {
         return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     }
     /* The device stores the threshold in units of 10 ms, so a non-multiple
@@ -581,8 +588,7 @@ static data_frame_tx_t *cmd_processor_set_multi_tap_config(uint16_t cmd, uint16_
     if ((threshold_ms % SETTINGS_MULTI_TAP_UNIT_MS) != 0) {
         return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     }
-    settings_set_button_tap_count('A', taps_a);
-    settings_set_button_tap_count('B', taps_b);
+    settings_set_multi_tap_bindings(data);
     settings_set_multi_tap_threshold_ms(threshold_ms);
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
@@ -4856,8 +4862,8 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_SET_BLE_PAIRING_ENABLE,       NULL,                        cmd_processor_set_ble_pairing_enable,        NULL                   },
     {    DATA_CMD_GET_SLEEP_TIMEOUT,            NULL,                        cmd_processor_get_sleep_timeout,             NULL                   },
     {    DATA_CMD_SET_SLEEP_TIMEOUT,            NULL,                        cmd_processor_set_sleep_timeout,             NULL                   },
-    {    DATA_CMD_GET_MULTI_TAP_CONFIG,         NULL,                        cmd_processor_get_multi_tap_config,         NULL                   },
-    {    DATA_CMD_SET_MULTI_TAP_CONFIG,         NULL,                        cmd_processor_set_multi_tap_config,         NULL                   },
+    {    DATA_CMD_GET_MULTI_TAP_BINDINGS,        NULL,                        cmd_processor_get_multi_tap_bindings,        NULL                   },
+    {    DATA_CMD_SET_MULTI_TAP_BINDINGS,        NULL,                        cmd_processor_set_multi_tap_bindings,        NULL                   },
     {    DATA_CMD_GET_ALL_SLOT_NICKS,           NULL,                        cmd_processor_get_all_slot_nicks,            NULL                   },
     {    DATA_CMD_GET_BOOTLOADER_VERSION,       NULL,                        cmd_processor_get_bootloader_version,        NULL                   },
     {    DATA_CMD_GET_DFU_APP_VERSION,          NULL,                        cmd_processor_get_dfu_app_version,           NULL                   },

@@ -77,8 +77,11 @@
 #define DATA_CMD_U2F_SET_ATTESTATION            (1060)  /* u8[32] att_priv, u8[] att_cert_der -> provision U2F attestation */
 #define DATA_CMD_GET_BOOTLOADER_VERSION         (1061)
 #define DATA_CMD_GET_FREE_MEMORY                (1062)
-#define DATA_CMD_GET_MULTI_TAP_CONFIG          (1063)  /* -> u8 taps_a, u8 taps_b, u16 threshold_ms (LE) */
-#define DATA_CMD_SET_MULTI_TAP_CONFIG          (1064)  /* <- u8 taps_a, u8 taps_b, u16 threshold_ms (LE) */
+// 1063/1064 were DATA_CMD_GET/SET_MULTI_TAP_CONFIG: the version8 "short press
+// after N taps" modifier. That model is replaced by the per-tap-count
+// bindings below; the IDs stay reserved.
+#define DATA_CMD_GET_MULTI_TAP_BINDINGS         (1065)  /* -> fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
+#define DATA_CMD_SET_MULTI_TAP_BINDINGS         (1066)  /* <- fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
 
 //
 // ******************************************************************

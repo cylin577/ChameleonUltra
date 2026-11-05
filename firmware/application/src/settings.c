@@ -4,13 +4,15 @@
 #include "crc_utils.h"
 #include "app_status.h"
 #include "settings.h"
+#include "app_button_tap.h"
 #include "fds_ids.h"
 #include "fds_util.h"
 
-_Static_assert(sizeof(settings_data_t) == 36, "settings record size must stay 36 bytes");
-_Static_assert(offsetof(settings_data_t, button_a_tap_count) == 33, "tap count A must stay @33");
-_Static_assert(offsetof(settings_data_t, button_b_tap_count) == 34, "tap count B must stay @34");
-_Static_assert(offsetof(settings_data_t, multi_tap_threshold) == 35, "threshold must stay @35");
+_Static_assert(sizeof(settings_data_t) == 40, "settings record size must stay 40 bytes (10 FDS words)");
+_Static_assert(sizeof(settings_data_t) % 4 == 0, "settings record must be a whole number of FDS words");
+_Static_assert(offsetof(settings_data_t, multi_tap_bindings) == 33, "multi-tap bindings must start @33");
+_Static_assert(offsetof(settings_data_t, multi_tap_threshold) == 37, "threshold must be @37");
+_Static_assert(offsetof(settings_data_t, reserved1) == 38, "reserved tail must start @38");
 
 #define NRF_LOG_MODULE_NAME settings
 #include "nrf_log.h"
@@ -72,9 +74,12 @@ void settings_init_ble_name_config(void) {
 
 // add on version8
 void settings_init_multi_tap_config(void) {
-    config.button_a_tap_count = SETTINGS_TAP_COUNT_DEFAULT;
-    config.button_b_tap_count = SETTINGS_TAP_COUNT_DEFAULT;
     config.multi_tap_threshold = SETTINGS_MULTI_TAP_DEFAULT_MS / SETTINGS_MULTI_TAP_UNIT_MS;
+}
+
+// add on version9
+void settings_init_multi_tap_bindings(void) {
+    memset(config.multi_tap_bindings, 0, sizeof(config.multi_tap_bindings)); // every binding = Disable
 }
 
 void settings_init_config(void) {
@@ -87,6 +92,7 @@ void settings_init_config(void) {
     settings_init_sleep_timeout_config();
     settings_init_ble_name_config();
     settings_init_multi_tap_config();
+    settings_init_multi_tap_bindings();
 }
 
 void settings_migrate(void) {
@@ -117,6 +123,14 @@ void settings_migrate(void) {
             // version<=7 records carry garbage in the struct's tail padding
             // bytes, so the multi-tap config is always re-initialized here.
             settings_init_multi_tap_config();
+
+        case 8:
+            // version8 records carry the retired per-button tap-count bytes;
+            // the new binding table (bytes 33..36 of the version8 layout) is
+            // always re-initialized here. The version8 threshold byte moves
+            // from @35 to @37, so the threshold is reset to the default too.
+            settings_init_multi_tap_config();
+            settings_init_multi_tap_bindings();
 
             /*
              * Add new migration steps ABOVE THIS COMMENT
@@ -373,68 +387,90 @@ bool settings_set_ble_name(const char *name, uint8_t len) {
 }
 
 /**
- * @brief Get the number of taps needed to fire a button's short-press function.
+ * @brief Map a (button, tap count) pair to its slot in the binding table.
  *
- * @param which 'a' or 'b'
- * @return tap count (1..5)
+ * The table holds 8 four-bit function codes: A2,A3,A4,A5,B2,B3,B4,B5.
+ *
+ * @param which      'a' or 'b'
+ * @param tap_count  2..5 (1 is the short-press binding, not stored here)
+ * @return the slot index (0..7) or 0xFF when the pair is invalid
  */
-uint8_t settings_get_button_tap_count(char which) {
-    uint8_t taps;
-    switch (which) {
-        case 'a':
-        case 'A':
-            taps = config.button_a_tap_count;
-            break;
-
-        case 'b':
-        case 'B':
-            taps = config.button_b_tap_count;
-            break;
-
-        default:
-            // can't to here.
-            APP_ERROR_CHECK_BOOL(false);
-            taps = SETTINGS_TAP_COUNT_DEFAULT;
-            break;
+static uint8_t multi_tap_binding_index(char which, uint8_t tap_count) {
+    if ((tap_count < SETTINGS_MULTI_TAP_COUNT_MIN) || (tap_count > SETTINGS_MULTI_TAP_COUNT_MAX)) {
+        APP_ERROR_CHECK_BOOL(false);
+        return 0xFF;
     }
-    if (taps < SETTINGS_TAP_COUNT_MIN) {
-        taps = SETTINGS_TAP_COUNT_MIN;
+    if ((which == 'a') || (which == 'A')) {
+        return (uint8_t)(tap_count - SETTINGS_MULTI_TAP_COUNT_MIN);
     }
-    if (taps > SETTINGS_TAP_COUNT_MAX) {
-        taps = SETTINGS_TAP_COUNT_MAX;
+    if ((which == 'b') || (which == 'B')) {
+        return (uint8_t)(SETTINGS_MULTI_TAP_BIND_COUNT + tap_count - SETTINGS_MULTI_TAP_COUNT_MIN);
     }
-    return taps;
+    APP_ERROR_CHECK_BOOL(false);
+    return 0xFF;
 }
 
 /**
- * @brief Set the number of taps needed to fire a button's short-press function.
+ * @brief Get the function bound to a (button, tap count) multi-tap slot.
  *
- * @param which 'a' or 'b'
- * @param taps tap count, clamped to 1..5
+ * @param which      'a' or 'b'
+ * @param tap_count  2..5 (1 is the short-press binding, not stored here)
+ * @return the function code (SettingsButtonDisable == 0 when unbound)
  */
-void settings_set_button_tap_count(char which, uint8_t taps) {
-    if (taps < SETTINGS_TAP_COUNT_MIN) {
-        taps = SETTINGS_TAP_COUNT_MIN;
+uint8_t settings_get_multi_tap_binding(char which, uint8_t tap_count) {
+    uint8_t index = multi_tap_binding_index(which, tap_count);
+    if (index == 0xFF) {
+        return SettingsButtonDisable;
     }
-    if (taps > SETTINGS_TAP_COUNT_MAX) {
-        taps = SETTINGS_TAP_COUNT_MAX;
-    }
-    switch (which) {
-        case 'a':
-        case 'A':
-            config.button_a_tap_count = taps;
-            break;
+    return app_button_tap_get(config.multi_tap_bindings, index);
+}
 
-        case 'b':
-        case 'B':
-            config.button_b_tap_count = taps;
-            break;
-
-        default:
-            // can't to here.
-            APP_ERROR_CHECK_BOOL(false);
-            break;
+/**
+ * @brief Bind a function to a (button, tap count) multi-tap slot.
+ *
+ * @param which      'a' or 'b'
+ * @param tap_count  2..5 (1 is the short-press binding, not stored here)
+ * @param function   @link{ settings_button_function_t }
+ */
+void settings_set_multi_tap_binding(char which, uint8_t tap_count, uint8_t function) {
+    uint8_t index = multi_tap_binding_index(which, tap_count);
+    if (index == 0xFF) {
+        return;
     }
+    app_button_tap_set(config.multi_tap_bindings, index, function & 0x0F);
+}
+
+/**
+ * @brief Get all 8 multi-tap function codes.
+ *
+ * @param fn out: A2,A3,A4,A5,B2,B3,B4,B5 (0 = Disable)
+ */
+void settings_get_multi_tap_bindings(uint8_t fn[SETTINGS_MULTI_TAP_BIND_TOTAL]) {
+    app_button_tap_unpack(config.multi_tap_bindings, fn);
+}
+
+/**
+ * @brief Set all 8 multi-tap function codes.
+ *
+ * @param fn in: A2,A3,A4,A5,B2,B3,B4,B5 (0 = Disable)
+ */
+void settings_set_multi_tap_bindings(const uint8_t fn[SETTINGS_MULTI_TAP_BIND_TOTAL]) {
+    app_button_tap_pack(fn, config.multi_tap_bindings);
+}
+
+/**
+ * @brief Is any tap count 2..5 bound for this button?
+ *
+ * A button with a multi-tap binding must wait for the inter-tap threshold
+ * before running its 1-tap (short-press) action.
+ */
+bool settings_has_multi_tap_binding(char which) {
+    for (uint8_t taps = SETTINGS_MULTI_TAP_COUNT_MIN; taps <= SETTINGS_MULTI_TAP_COUNT_MAX; taps++) {
+        if (settings_get_multi_tap_binding(which, taps) != SettingsButtonDisable) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /**

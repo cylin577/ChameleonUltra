@@ -54,6 +54,7 @@ NRF_LOG_MODULE_REGISTER();
 
 // Defining soft timers
 APP_TIMER_DEF(m_button_check_timer); // Timer for button debounce
+APP_TIMER_DEF(m_button_tap_timer);   // Timer for the multi-tap sequence expiry
 
 #define BTN_IDX_A      0
 #define BTN_IDX_B      1
@@ -64,7 +65,8 @@ APP_TIMER_DEF(m_button_check_timer); // Timer for button debounce
 static uint32_t m_last_btn_press[BTN_IDX_COUNT] = {0, 0};        /* press ticks, per button */
 static bool m_is_btn_long_press[BTN_IDX_COUNT] = {false, false}; /* per button */
 static uint32_t m_btn_prev_release_ticks[BTN_IDX_COUNT] = {0, 0}; /* release ticks of the last completed short tap */
-static uint8_t  m_btn_tap_count[BTN_IDX_COUNT]  = {0, 0};
+static app_button_tap_state_t m_btn_tap_state[BTN_IDX_COUNT] = {{0, false}, {0, false}};
+static volatile bool m_btn_tap_check = false; /* set by the expiry timer, cleared by the main loop */
 
 static bool m_is_b_btn_press = false;
 static bool m_is_a_btn_press = false;
@@ -215,6 +217,18 @@ static void button_pin_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t a
     }
 }
 
+/**@brief Is any function bound to this button at all?
+ *
+ * A button with only a long-press binding used to be ignored entirely (the
+ * press was gated on the short-press config); the multi-tap bindings need the
+ * same treatment.
+ */
+static bool button_has_any_binding(char which) {
+    return settings_get_button_press_config(which) != SettingsButtonDisable
+           || settings_get_long_button_press_config(which) != SettingsButtonDisable
+           || settings_has_multi_tap_binding(which);
+}
+
 /** @brief Button anti-shake timer
  * @param None
  * @return None
@@ -232,15 +246,16 @@ static void timer_button_event_handle(void *arg) {
     // Check here if the current GPIO is at the pressed level
     if (nrf_gpio_pin_read(pin) == 1) {
         if (pin == BUTTON_1) {
-            // If button is disabled, we can't dispatch key event.
-            if (settings_get_button_press_config('b') != SettingsButtonDisable) {
+            // The button must be registered when ANY binding is set: the
+            // short press, the long press or a multi-tap binding.
+            if (button_has_any_binding('b')) {
                 NRF_LOG_INFO("BUTTON_B_PRESS");
                 m_is_b_btn_press = true;
                 m_last_btn_press[BTN_IDX_B] = app_timer_cnt_get();
             }
         }
         if (pin == BUTTON_2) {
-            if (settings_get_button_press_config('a') != SettingsButtonDisable) {
+            if (button_has_any_binding('a')) {
                 NRF_LOG_INFO("BUTTON_A_PRESS");
                 m_is_a_btn_press = true;
                 m_last_btn_press[BTN_IDX_A] = app_timer_cnt_get();
@@ -253,8 +268,8 @@ static void timer_button_event_handle(void *arg) {
             uint32_t now = app_timer_cnt_get();
             uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press[BTN_IDX_B]);
             bool is_long_press = ticks > APP_TIMER_TICKS(1000);
-            // If button is disabled, we can't dispatch key event.
-            if (settings_get_button_press_config('b') != SettingsButtonDisable) {
+            // If the button has no binding at all, we can't dispatch key event.
+            if (button_has_any_binding('b')) {
                 m_is_b_btn_release = true;
                 m_is_b_btn_press = false;
                 if (!is_long_press) {
@@ -269,7 +284,7 @@ static void timer_button_event_handle(void *arg) {
             uint32_t now = app_timer_cnt_get();
             uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press[BTN_IDX_A]);
             bool is_long_press = ticks > APP_TIMER_TICKS(1000);
-            if (settings_get_button_press_config('a') != SettingsButtonDisable) {
+            if (button_has_any_binding('a')) {
                 m_is_a_btn_release = true;
                 m_is_a_btn_press = false;
                 if (!is_long_press) {
@@ -284,6 +299,10 @@ static void timer_button_event_handle(void *arg) {
 
 }
 
+/* Forward declaration: the multi-tap expiry timer is created in button_init()
+ * but its handler lives with the rest of the tap state machine. */
+static void timer_button_tap_expired(void *arg);
+
 /**@brief Function for init button and led.
  */
 static void button_init(void) {
@@ -291,6 +310,10 @@ static void button_init(void) {
 
     // Non-exact timer for initializing button anti-shake
     err_code = app_timer_create(&m_button_check_timer, APP_TIMER_MODE_SINGLE_SHOT, timer_button_event_handle);
+    APP_ERROR_CHECK(err_code);
+
+    // Single shot timer for the multi-tap sequence expiry
+    err_code = app_timer_create(&m_button_tap_timer, APP_TIMER_MODE_SINGLE_SHOT, timer_button_tap_expired);
     APP_ERROR_CHECK(err_code);
 
     // Configure SENSE mode, select false for sense configuration
@@ -876,6 +899,8 @@ static void btn_fn_copy_ic_uid(void) {
  */
 static void run_button_function_by_settings(settings_button_function_t sbf) {
     switch (sbf) {
+        case SettingsButtonDisable:
+            break;
         case SettingsButtonCycleSlot:
             cycle_slot(false);
             break;
@@ -969,34 +994,105 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
     }
 }
 
-/**@brief Register a short-press release in the button's multi-tap sequence.
- *
- * The inter-tap gap is measured from the previous tap's RELEASE to this
- * tap's PRESS (the standard double-tap definition). The measurement is done
- * in timer ticks with the SDK's wrap-safe diff, so a sequence that straddles
- * the 24-bit RTC counter wrap is not lost.
+/**@brief Resolve a tap sequence whose inter-tap threshold expired.
  *
  * @param idx Button index (BTN_IDX_A / BTN_IDX_B).
- * @param which Button type, 'a' or 'b'.
- * @return true when the button's short-press function must run now.
  */
-static bool button_tap_on_short_release(int idx, char which) {
-    uint8_t required = settings_get_button_tap_count(which);
-    if (required <= 1) { m_btn_tap_count[idx] = 0; return true; }  /* current behaviour, no added latency */
+static void button_tap_sequence_expired(int idx) {
+    char which = (idx == BTN_IDX_A) ? 'a' : 'b';
+    uint8_t bindings[SETTINGS_MULTI_TAP_BIND_TOTAL];
+    settings_get_multi_tap_bindings(bindings);
+    const uint8_t *btn_bindings = (which == 'a') ? &bindings[0] : &bindings[SETTINGS_MULTI_TAP_BIND_COUNT];
+    app_button_tap_result_t r = app_button_tap_timeout(&m_btn_tap_state[idx],
+                                                       settings_get_button_press_config(which),
+                                                       btn_bindings);
+    if (r.run != APP_BUTTON_TAP_RUN_NONE) {
+        run_button_function_by_settings((settings_button_function_t)r.function);
+    }
+}
+
+/**@brief Arm the multi-tap expiry timer for the earliest pending sequence.
+ *
+ * A button that is currently held is skipped: it must not expire while the
+ * user may still be in the middle of a 2..5 tap gesture. Its sequence is
+ * resolved when the button is released instead.
+ */
+static void button_tap_timer_restart(void) {
+    uint32_t now = app_timer_cnt_get();
+    uint32_t threshold_ticks = APP_TIMER_TICKS(settings_get_multi_tap_threshold_ms());
+    uint32_t earliest = 0;
+    bool any = false;
+    for (int i = 0; i < BTN_IDX_COUNT; i++) {
+        if (m_btn_tap_state[i].count == 0) {
+            continue;
+        }
+        bool held = (i == BTN_IDX_A) ? m_is_a_btn_press : m_is_b_btn_press;
+        if (held) {
+            continue;
+        }
+        uint32_t elapsed = app_timer_cnt_diff_compute(now, m_btn_prev_release_ticks[i]);
+        uint32_t delay = (elapsed >= threshold_ticks) ? 0 : (threshold_ticks - elapsed);
+        if (!any || delay < earliest) {
+            earliest = delay;
+            any = true;
+        }
+    }
+    if (!any) {
+        app_timer_stop(m_button_tap_timer);
+        return;
+    }
+    if (earliest < APP_TIMER_MIN_TIMEOUT_TICKS) {
+        earliest = APP_TIMER_MIN_TIMEOUT_TICKS;
+    }
+    app_timer_stop(m_button_tap_timer);
+    app_timer_start(m_button_tap_timer, earliest, NULL);
+}
+
+/**@brief Multi-tap sequence expiry timer.
+ *
+ * Runs in the app_timer (RTC1 IRQ) context: it must not run a button function
+ * here, it only flags the main loop, which resolves the sequence.
+ */
+static void timer_button_tap_expired(void *arg) {
+    m_btn_tap_check = true;
+}
+
+/**@brief Register a short-press release in the button's tap sequence.
+ *
+ * The inter-tap gap is measured from the previous tap's RELEASE to this tap's
+ * PRESS (the standard double-tap definition), with the SDK's wrap-safe diff.
+ *
+ * @param idx   Button index (BTN_IDX_A / BTN_IDX_B).
+ * @param which Button type, 'a' or 'b'.
+ */
+static void button_tap_on_short_release(int idx, char which) {
     uint32_t threshold_ms = settings_get_multi_tap_threshold_ms();
     uint32_t now_ticks = app_timer_cnt_get();
-    uint32_t press_ticks = m_last_btn_press[idx];
-    uint32_t elapsed_ms = 0;
-    if (m_btn_tap_count[idx] > 0) {
-        /* wrap-safe: app_timer_cnt_diff_compute masks to the RTC counter width */
-        uint32_t elapsed_ticks = app_timer_cnt_diff_compute(press_ticks, m_btn_prev_release_ticks[idx]);
-        elapsed_ms = app_button_tap_elapsed_ms(elapsed_ticks, APP_TIMER_TICKS(1000));
+
+    /* A new sequence starts when the gap since the previous release exceeds
+     * the threshold. The expiry timer normally fired already; this is the
+     * race fallback. */
+    if (m_btn_tap_state[idx].count > 0) {
+        uint32_t elapsed_ticks = app_timer_cnt_diff_compute(m_last_btn_press[idx],
+                                                             m_btn_prev_release_ticks[idx]);
+        uint32_t elapsed_ms = app_button_tap_elapsed_ms(elapsed_ticks, APP_TIMER_TICKS(1000));
+        if (elapsed_ms > threshold_ms) {
+            button_tap_sequence_expired(idx);
+        }
     }
-    app_button_tap_result_t r = app_button_tap_on_short_press(elapsed_ms,
-                                                              m_btn_tap_count[idx], required, threshold_ms);
-    m_btn_tap_count[idx] = r.count;
+
+    uint8_t bindings[SETTINGS_MULTI_TAP_BIND_TOTAL];
+    settings_get_multi_tap_bindings(bindings);
+    const uint8_t *btn_bindings = (which == 'a') ? &bindings[0] : &bindings[SETTINGS_MULTI_TAP_BIND_COUNT];
+
+    app_button_tap_result_t r = app_button_tap_on_short_press(&m_btn_tap_state[idx],
+                                                              settings_get_button_press_config(which),
+                                                              btn_bindings);
     m_btn_prev_release_ticks[idx] = now_ticks;
-    return r.fire;
+    if (r.run != APP_BUTTON_TAP_RUN_NONE) {
+        run_button_function_by_settings((settings_button_function_t)r.function);
+    }
+    button_tap_timer_restart();
 }
 
 /**@brief button press event process
@@ -1007,25 +1103,23 @@ static void button_press_process(void) {
     if (m_is_b_btn_release || m_is_a_btn_release) {
         if (m_is_a_btn_release) {
             if (!m_is_btn_long_press[BTN_IDX_A]) {
-                if (button_tap_on_short_release(BTN_IDX_A, 'a')) {
-                    run_button_function_by_settings(settings_get_button_press_config('a'));
-                }
+                button_tap_on_short_release(BTN_IDX_A, 'a');
             } else {
                 run_button_function_by_settings(settings_get_long_button_press_config('a'));
                 /* A long press is a separate gesture: it never counts as a
                  * tap and it resets the pending multi-tap sequence. */
-                m_btn_tap_count[BTN_IDX_A] = 0;
+                m_btn_tap_state[BTN_IDX_A].count = 0;
+                m_btn_tap_state[BTN_IDX_A].fired = false;
             }
             m_is_a_btn_release = false;
         }
         if (m_is_b_btn_release) {
             if (!m_is_btn_long_press[BTN_IDX_B]) {
-                if (button_tap_on_short_release(BTN_IDX_B, 'b')) {
-                    run_button_function_by_settings(settings_get_button_press_config('b'));
-                }
+                button_tap_on_short_release(BTN_IDX_B, 'b');
             } else {
                 run_button_function_by_settings(settings_get_long_button_press_config('b'));
-                m_btn_tap_count[BTN_IDX_B] = 0;
+                m_btn_tap_state[BTN_IDX_B].count = 0;
+                m_btn_tap_state[BTN_IDX_B].fired = false;
             }
             m_is_b_btn_release = false;
         }
@@ -1035,6 +1129,30 @@ static void button_press_process(void) {
         if (!m_is_field_on) {
             sleep_timer_start(settings_get_sleep_timeout());
         }
+    }
+
+    /* Multi-tap sequence expiry. This runs AFTER the release handling above,
+     * so a tap that arrives in the same loop iteration is counted first. A
+     * button that is currently held down must not expire either: the user
+     * may be in the middle of a 2..5 tap gesture. */
+    if (m_btn_tap_check) {
+        m_btn_tap_check = false;
+        uint32_t now = app_timer_cnt_get();
+        uint32_t threshold_ticks = APP_TIMER_TICKS(settings_get_multi_tap_threshold_ms());
+        for (int i = 0; i < BTN_IDX_COUNT; i++) {
+            if (m_btn_tap_state[i].count == 0) {
+                continue;
+            }
+            bool held = (i == BTN_IDX_A) ? m_is_a_btn_press : m_is_b_btn_press;
+            if (held) {
+                continue;
+            }
+            if (app_timer_cnt_diff_compute(now, m_btn_prev_release_ticks[i]) < threshold_ticks) {
+                continue; /* the other button's timer fired first */
+            }
+            button_tap_sequence_expired(i);
+        }
+        button_tap_timer_restart();
     }
 }
 

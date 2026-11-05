@@ -2024,6 +2024,18 @@ class HWBatteryInfo(DeviceRequiredUnit):
             print(color_string((CR, "[!] Low battery, please charge.")))
 
 
+MULTITAP_MIN_THRESHOLD_MS = 50
+MULTITAP_MAX_THRESHOLD_MS = 1000
+MULTITAP_DEFAULT_THRESHOLD_MS = 250
+MULTITAP_BIND_TAP_MIN = 2  # tap counts 2..5 are bindable; 1 is the short press
+MULTITAP_BIND_TAP_MAX = 5
+
+
+def multitap_count_text(count: int) -> str:
+    """'1 tap' / '2 taps'"""
+    return f"{count} tap" + ("" if count == 1 else "s")
+
+
 @hw_settings.command("btnpress")
 class HWButtonSettingsGet(DeviceRequiredUnit):
 
@@ -2040,6 +2052,24 @@ class HWButtonSettingsGet(DeviceRequiredUnit):
         duration_group.add_argument(
             "-l", "--long", action="store_true", help="Long-press"
         )
+        duration_group.add_argument(
+            "--multitap",
+            action="store_true",
+            help="Bind a function to a tap count (see --taps)",
+        )
+        parser.add_argument(
+            "--taps",
+            type=int,
+            required=False,
+            metavar="N",
+            choices=[1, 2, 3, 4, 5],
+            help=(
+                "Tap count for --multitap: 1 = the short-press binding, "
+                "2-5 = a multi-tap binding (factory default: all disabled); "
+                "the action of a tap count waits for the threshold when a "
+                "higher tap count is bound on the same button"
+            ),
+        )
         function_names = [f.name for f in list(ButtonPressFunction)]
         function_descs = [f"{f.name} ({f})" for f in list(ButtonPressFunction)]
         help_str = "Function: " + ", ".join(function_descs)
@@ -2055,6 +2085,48 @@ class HWButtonSettingsGet(DeviceRequiredUnit):
         return parser
 
     def on_exec(self, args: argparse.Namespace):
+        if args.multitap:
+            if args.taps is None:
+                print(
+                    color_string(
+                        (CR, "--multitap requires --taps N (1-5)")
+                    )
+                )
+                return
+            if args.function is None:
+                print(
+                    color_string(
+                        (CR, "--multitap requires --function FUNCTION")
+                    )
+                )
+                return
+            if not args.a and not args.b:
+                print(
+                    color_string(
+                        (CR, "You must specify which button you want to change (-a/-A or -b/-B)")
+                    )
+                )
+                return
+            button = ButtonType.A if args.a else ButtonType.B
+            function = ButtonPressFunction[args.function]
+            if args.taps == 1:
+                # A single tap is the button's short-press binding.
+                self.cmd.set_button_press_config(button, function)
+                print(
+                    f" - Successfully set function '{function}' to Button {button.name} 1 tap (short-press)"
+                )
+            else:
+                self.cmd.set_multi_tap_binding(button, args.taps, function)
+                print(
+                    f" - Successfully set function '{function}' to Button {button.name} {multitap_count_text(args.taps)}"
+                )
+            print(color_string((CY, "Do not forget to store your settings in flash!")))
+            return
+
+        if args.taps is not None:
+            print(color_string((CR, "--taps requires --multitap")))
+            return
+
         if args.function is not None:
             function = ButtonPressFunction[args.function]
             if not args.a and not args.b:
@@ -2084,49 +2156,39 @@ class HWButtonSettingsGet(DeviceRequiredUnit):
                 button_list = [ButtonType.B]
             else:
                 button_list = list(ButtonType)
-            # The tap count is a separate setting; old firmware doesn't have it.
-            tap_counts = None
-            if not args.long:
-                try:
-                    taps_a, taps_b, _ = self.cmd.get_multi_tap_config()
-                    tap_counts = {ButtonType.A: taps_a, ButtonType.B: taps_b}
-                except chameleon_com.CMDInvalidException:
-                    tap_counts = None
+            # The multi-tap bindings are a separate setting; old firmware
+            # doesn't have them.
+            bindings = None
+            try:
+                bindings = self.cmd.get_multi_tap_bindings()
+            except chameleon_com.CMDInvalidException:
+                bindings = None
             for button in button_list:
                 if not args.long:
                     resp = self.cmd.get_button_press_config(button)
                     button_fn = ButtonPressFunction(resp)
-                    label = f"{button.name} short"
-                    if tap_counts is not None:
-                        label += f" ({multitap_count_text(tap_counts[button])})"
-                    print(f"{color_string((CG, label))}: {button_fn}")
+                    print(
+                        f"{color_string((CG, f'{button.name} short (1 tap)'))}: {button_fn}"
+                    )
                 if not args.short:
                     resp_long = self.cmd.get_long_button_press_config(button)
                     button_long_fn = ButtonPressFunction(resp_long)
                     print(
                         f"{color_string((CG, f'{button.name} long'))}: {button_long_fn}"
                     )
+                if bindings is not None and not args.long:
+                    key = 'a' if button == ButtonType.A else 'b'
+                    for taps in range(MULTITAP_BIND_TAP_MIN, MULTITAP_BIND_TAP_MAX + 1):
+                        fn = ButtonPressFunction(bindings[key][taps - MULTITAP_BIND_TAP_MIN])
+                        print(
+                            f"{color_string((CG, f'{button.name} {multitap_count_text(taps)}'))}: {fn}"
+                        )
                 print("")
-
-
-MULTITAP_TAP_NAMES = ["single", "double", "triple", "quadruple", "quintuple"]
-MULTITAP_COUNT_BY_NAME = {name: i + 1 for i, name in enumerate(MULTITAP_TAP_NAMES)}
-MULTITAP_NAME_BY_COUNT = {i + 1: name for i, name in enumerate(MULTITAP_TAP_NAMES)}
-MULTITAP_MIN_THRESHOLD_MS = 50
-MULTITAP_MAX_THRESHOLD_MS = 1000
-MULTITAP_DEFAULT_THRESHOLD_MS = 250
-
-
-def multitap_count_text(count: int) -> str:
-    """'1 tap' / '2 taps'"""
-    return f"{count} tap" + ("" if count == 1 else "s")
-
-
-def multitap_tap_label(count: int) -> str:
-    """'single (1 tap)' / 'double (2 taps)'"""
-    name = MULTITAP_NAME_BY_COUNT.get(count)
-    text = multitap_count_text(count)
-    return f"{name} ({text})" if name else text
+            if bindings is not None and not args.long:
+                print(
+                    f"{color_string((CG, 'Tap threshold'))} : {bindings['threshold_ms']} ms"
+                )
+                print("")
 
 
 @hw_settings.command("multitap")
@@ -2135,32 +2197,42 @@ class HWSettingsMultiTap(DeviceRequiredUnit):
     def args_parser(self) -> ArgumentParserNoExit:
         parser = ArgumentParserNoExit()
         parser.description = (
-            "Get or set the multi-tap button config. A button's short-press "
-            "function runs only after the requested number of taps (1-5). "
+            "Get or set the multi-tap button bindings. Each button (A/B) can "
+            "bind a function to a tap count (2-5); a single tap is the "
+            "button's short-press function (see 'hw settings btnpress'). "
             "Consecutive taps must be no more than the threshold apart "
             f"({MULTITAP_MIN_THRESHOLD_MS}-{MULTITAP_MAX_THRESHOLD_MS} ms, "
-            f"factory default {MULTITAP_DEFAULT_THRESHOLD_MS} ms)."
+            f"factory default {MULTITAP_DEFAULT_THRESHOLD_MS} ms). "
+            "A single tap runs the button's short-press function; it is "
+            "delayed until the threshold expires when a multi-tap binding is "
+            "set on that button. When a higher tap count is bound on the same "
+            "button, the lower one also waits for the threshold."
         )
-        tap_help = (
-            "Taps needed for the button's short-press function: "
-            + ", ".join(MULTITAP_TAP_NAMES)
-            + " - unchanged if omitted (factory default: single)"
-        )
+        button_group = parser.add_mutually_exclusive_group()
+        button_group.add_argument("-a", "-A", action="store_true", help="Button A")
+        button_group.add_argument("-b", "-B", action="store_true", help="Button B")
         parser.add_argument(
-            "--button-a-taps",
+            "--taps",
+            type=int,
+            required=False,
+            metavar="N",
+            choices=[1, 2, 3, 4, 5],
+            help=(
+                "Tap count to bind: 1 = the short-press binding, 2-5 = a "
+                "multi-tap binding; the action of a tap count waits for the "
+                "threshold when a higher tap count is bound on the same button"
+            ),
+        )
+        function_names = [f.name for f in list(ButtonPressFunction)]
+        function_descs = [f"{f.name} ({f})" for f in list(ButtonPressFunction)]
+        parser.add_argument(
+            "-f",
+            "--function",
             type=str,
             required=False,
-            metavar="TAPS",
-            choices=MULTITAP_TAP_NAMES,
-            help=tap_help,
-        )
-        parser.add_argument(
-            "--button-b-taps",
-            type=str,
-            required=False,
-            metavar="TAPS",
-            choices=MULTITAP_TAP_NAMES,
-            help=tap_help,
+            help="Function: " + ", ".join(function_descs),
+            metavar="FUNCTION",
+            choices=function_names,
         )
         parser.add_argument(
             "--threshold-ms",
@@ -2195,9 +2267,6 @@ class HWSettingsMultiTap(DeviceRequiredUnit):
                     )
                 )
                 return
-            # The device stores the threshold in units of 10 ms, so snap the
-            # request down to a multiple of 10 ms: what we print is then
-            # exactly what the device stores.
             snapped_threshold = (args.threshold_ms // 10) * 10
             if not (
                 MULTITAP_MIN_THRESHOLD_MS
@@ -2219,36 +2288,58 @@ class HWSettingsMultiTap(DeviceRequiredUnit):
                 )
                 return
 
-        try:
-            cur_a, cur_b, cur_threshold = self.cmd.get_multi_tap_config()
-        except chameleon_com.CMDInvalidException:
-            print("Multi-tap settings are not supported by the current firmware.")
+        if args.taps is not None and args.function is None:
+            print(color_string((CR, "--taps requires --function FUNCTION")))
+            return
+        if args.function is not None and args.taps is None:
+            print(color_string((CR, "--function requires --taps N (1-5)")))
+            return
+        if args.taps is not None and not (args.a or args.b):
+            print(
+                color_string(
+                    (CR, "You must specify which button you want to change (-a/-A or -b/-B)")
+                )
+            )
             return
 
-        new_a = (
-            MULTITAP_COUNT_BY_NAME[args.button_a_taps]
-            if args.button_a_taps is not None
-            else cur_a
-        )
-        new_b = (
-            MULTITAP_COUNT_BY_NAME[args.button_b_taps]
-            if args.button_b_taps is not None
-            else cur_b
-        )
+        try:
+            cur = self.cmd.get_multi_tap_bindings()
+        except chameleon_com.CMDInvalidException:
+            print("Multi-tap bindings are not supported by the current firmware.")
+            return
+
+        new_a = list(cur['a'])
+        new_b = list(cur['b'])
         new_threshold = (
-            snapped_threshold if snapped_threshold is not None else cur_threshold
+            snapped_threshold if snapped_threshold is not None else cur['threshold_ms']
         )
 
-        changed = (new_a, new_b, new_threshold) != (cur_a, cur_b, cur_threshold)
-        if changed:
-            # All-or-nothing: the device stores the three values as one config.
-            try:
-                self.cmd.set_multi_tap_config(new_a, new_b, new_threshold)
-            except chameleon_com.CMDInvalidException:
+        changed = False        # the multi-tap binding table changed
+        wrote_short = False    # the short-press binding changed
+        threshold_changed = (
+            snapped_threshold is not None and snapped_threshold != cur['threshold_ms']
+        )
+        if args.taps is not None:
+            button = ButtonType.A if args.a else ButtonType.B
+            function = ButtonPressFunction[args.function]
+            if args.taps == 1:
+                # A single tap is the button's short-press binding.
+                self.cmd.set_button_press_config(button, function)
                 print(
-                    "Multi-tap settings are not supported by the current firmware."
+                    f" - Successfully set function '{function}' to Button {button.name} 1 tap (short-press)"
                 )
-                return
+                wrote_short = True
+            else:
+                slot = args.taps - MULTITAP_BIND_TAP_MIN
+                if button == ButtonType.A:
+                    new_a[slot] = int(function)
+                else:
+                    new_b[slot] = int(function)
+                changed = True
+
+        if changed or threshold_changed:
+            try:
+                self.cmd.set_multi_tap_bindings(tuple(new_a), tuple(new_b), new_threshold)
             except UnexpectedResponseError:
                 print(
                     color_string(
@@ -2261,24 +2352,22 @@ class HWSettingsMultiTap(DeviceRequiredUnit):
                 )
                 return
 
-        print(" - Multi-tap button configuration:")
-        print(
-            f"   {color_string((CG, 'Button A taps'))} : {multitap_tap_label(new_a)}"
-            + (f" (was {multitap_tap_label(cur_a)})" if new_a != cur_a else "")
-        )
-        print(
-            f"   {color_string((CG, 'Button B taps'))} : {multitap_tap_label(new_b)}"
-            + (f" (was {multitap_tap_label(cur_b)})" if new_b != cur_b else "")
-        )
+        print(" - Multi-tap button bindings:")
+        for button, fns in ((ButtonType.A, new_a), (ButtonType.B, new_b)):
+            for taps in range(MULTITAP_BIND_TAP_MIN, MULTITAP_BIND_TAP_MAX + 1):
+                fn = ButtonPressFunction(fns[taps - MULTITAP_BIND_TAP_MIN])
+                print(
+                    f"   {color_string((CG, f'Button {button.name} {multitap_count_text(taps)}'))} : {fn}"
+                )
         print(
             f"   {color_string((CG, 'Tap threshold'))} : {new_threshold} ms"
             + (
-                f" (was {cur_threshold} ms)"
-                if new_threshold != cur_threshold
+                f" (was {cur['threshold_ms']} ms)"
+                if new_threshold != cur['threshold_ms']
                 else ""
             )
         )
-        if changed:
+        if changed or threshold_changed or wrote_short:
             print(color_string((CY, "Do not forget to store your settings in flash!")))
 
 

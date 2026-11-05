@@ -48,6 +48,10 @@ const TAG_TYPE_BY_NAME = {
 
 const ANIMATION_BY_NAME = { FULL:0, MINIMAL:1, NONE:2, SYMMETRIC:3 };
 const BUTTON_FN_BY_NAME = { NONE:0, NEXTSLOT:1, PREVSLOT:2, CLONE:3, BATTERY:4, FIELDGEN:5, STANDALONE_DISARM:6, STANDALONE_TOGGLE:7, STANDALONE_ACTION:8, STANDALONE_CLEAR:9 };
+// reverse lookup: function code -> the name the CLI uses (-f/--function)
+const BUTTON_FN_NAME_BY_CODE = {};
+for(const [n, c] of Object.entries(BUTTON_FN_BY_NAME)) BUTTON_FN_NAME_BY_CODE[c] = n;
+function buttonFnName(code){ return BUTTON_FN_NAME_BY_CODE[code] || String(code); }
 const SENSE_NAMES = { 1:"HF", 2:"LF" }; // TagSenseType, matches firmware's hw_main.h
 
 // UID byte 0 -> manufacturer, ISO/IEC 7816-6 (pm3 manufactureMapping), ported
@@ -523,12 +527,39 @@ hwSettings.command("btnpress", "Get or set button press function of Button A and
   {names:["-b","-B"], takesValue:false, dest:"b"},
   {names:["-s","--short"], takesValue:false, dest:"short"},
   {names:["-l","--long"], takesValue:false, dest:"long"},
+  {names:["--multitap"], takesValue:false, dest:"multitap"},
+  {names:["--taps"], takesValue:true, dest:"taps", choices:["1","2","3","4","5"], help:"the action of a tap count waits for the threshold when a higher tap count is bound on the same button"},
   {names:["-f","--function"], takesValue:true, dest:"fn", choices:Object.keys(BUTTON_FN_BY_NAME)},
 ], async (a) => {
   need();
   if(a.a && a.b) throw new ArgError("-a and -b are mutually exclusive");
   if(a.short && a.long) throw new ArgError("-s/--short and -l/--long are mutually exclusive");
+  if(a.short && a.multitap) throw new ArgError("-s/--short and --multitap are mutually exclusive");
+  if(a.long && a.multitap) throw new ArgError("-l/--long and --multitap are mutually exclusive");
   const isLong = !!a.long;
+  if(a.multitap){
+    if(a.taps === undefined) return ["--multitap requires --taps N (1-5)"];
+    if(a.fn === undefined) return ["--multitap requires --function FUNCTION"];
+    if(!a.a && !a.b) return ["You must specify which button you want to change (-a or -b)"];
+    const type = (a.a ? "A" : "B").charCodeAt(0);
+    const fn = BUTTON_FN_BY_NAME[a.fn];
+    const taps = Number(a.taps);
+    if(taps === 1){
+      okOrThrow(await request(CU.SET_BUTTON_PRESS_CONFIG, [type, fn]));
+      return ["Button "+(a.a?"A":"B")+" 1 tap (short-press) set to: "+a.fn,
+              "Do not forget to store your settings in flash! (hw settings store)"];
+    }
+    let cur;
+    try { cur = multitapUnpack(okOrThrow(await request(CU.GET_MULTI_TAP_BINDINGS)).data); }
+    catch(e){ return ["Multi-tap bindings are not supported by the current firmware."]; }
+    const fns = (a.a ? cur.a : cur.b).slice();
+    fns[taps - 2] = fn;
+    const payload = (a.a ? [fns, cur.b] : [cur.a, fns]);
+    okOrThrow(await request(CU.SET_MULTI_TAP_BINDINGS, multitapPack(payload[0], payload[1], cur.thresholdMs)));
+    return ["Button "+(a.a?"A":"B")+" "+taps+" taps set to: "+a.fn,
+            "Do not forget to store your settings in flash! (hw settings store)"];
+  }
+  if(a.taps !== undefined) return ["--taps requires --multitap"];
   if(a.fn !== undefined){
     if(!a.a && !a.b) return ["You must specify which button you want to change (-a or -b)"];
     const type = (a.a ? "A" : "B").charCodeAt(0);
@@ -540,57 +571,75 @@ hwSettings.command("btnpress", "Get or set button press function of Button A and
   if(!a.a && !a.b) throw new ArgError("-a or -b is required to read a button's current function");
   const type = (a.a ? "A" : "B").charCodeAt(0);
   const f = okOrThrow(await request(isLong ? CU.GET_LONG_BUTTON_PRESS_CONFIG : CU.GET_BUTTON_PRESS_CONFIG, [type]));
-  const name = Object.keys(BUTTON_FN_BY_NAME).find(k=>BUTTON_FN_BY_NAME[k]===f.data[0]) || f.data[0];
-  let tapNote = "";
+  const name = buttonFnName(f.data[0]);
+  const lines = [];
   if(!isLong){
-    try {
-      const mf = okOrThrow(await request(CU.GET_MULTI_TAP_CONFIG));
-      const cfg = multitapUnpack(mf.data);
-      const n = type === 65 ? cfg.tapsA : cfg.tapsB;
-      tapNote = " ("+n+" tap"+(n===1?"":"s")+")";
-    } catch(e){}
+    lines.push("Button "+(a.a?"A":"B")+" short (1 tap): "+name);
+    const lf = okOrThrow(await request(CU.GET_LONG_BUTTON_PRESS_CONFIG, [type]));
+    lines.push("Button "+(a.a?"A":"B")+" long: "+buttonFnName(lf.data[0]));
+    let mt = null;
+    try { mt = multitapUnpack(okOrThrow(await request(CU.GET_MULTI_TAP_BINDINGS)).data); }
+    catch(e){}
+    if(mt){
+      const fns = (a.a ? mt.a : mt.b);
+      for(let t=2;t<=5;t++)
+        lines.push("Button "+(a.a?"A":"B")+" "+t+" taps: "+buttonFnName(fns[t-2]));
+      lines.push("Tap threshold: "+mt.thresholdMs+" ms");
+    }
+  } else {
+    lines.push("Button "+(a.a?"A":"B")+" (long press): "+name);
   }
-  return ["Button "+(a.a?"A":"B")+" ("+(isLong?"long":"short")+" press"+tapNote+"): "+name];
+  return lines;
 });
 
-hwSettings.command("multitap", "Get or set the multi-tap button config. A button's short-press function runs only after the requested number of taps (1-5). Consecutive taps must be no more than the threshold apart (50-1000 ms, factory default 250 ms).", [
-  {names:["--button-a-taps"], takesValue:true, dest:"aTaps", choices:MULTITAP_TAP_NAMES},
-  {names:["--button-b-taps"], takesValue:true, dest:"bTaps", choices:MULTITAP_TAP_NAMES},
+hwSettings.command("multitap", "Get or set the multi-tap button bindings. Each button (A/B) can bind a function to a tap count (2-5); a single tap is the button's short-press function. Consecutive taps must be no more than the threshold apart (50-1000 ms, factory default 250 ms). A single tap runs the button's short-press function; it is delayed until the threshold expires when a multi-tap binding is set on that button. When a higher tap count is bound on the same button, the lower one also waits for the threshold.", [
+  {names:["-a","-A"], takesValue:false, dest:"a"},
+  {names:["-b","-B"], takesValue:false, dest:"b"},
+  {names:["--taps"], takesValue:true, dest:"taps", choices:["1","2","3","4","5"], help:"the action of a tap count waits for the threshold when a higher tap count is bound on the same button"},
+  {names:["-f","--function"], takesValue:true, dest:"fn", choices:Object.keys(BUTTON_FN_BY_NAME)},
   {names:["--threshold-ms"], takesValue:true, dest:"threshold"},
 ], async (a) => {
   need();
+  if(a.a && a.b) throw new ArgError("-a and -b are mutually exclusive");
+  if(a.taps !== undefined && a.fn === undefined) return ["--taps requires --function FUNCTION"];
+  if(a.fn !== undefined && a.taps === undefined) return ["--function requires --taps N (1-5)"];
+  if(a.taps !== undefined && !a.a && !a.b) return ["You must specify which button you want to change (-a or -b)"];
   let threshold;
   if(a.threshold !== undefined){
     const raw = Number(a.threshold);
     if(!Number.isFinite(raw)) return ["Error: --threshold-ms must be a number."];
-    let snapped;
-    try { snapped = multitapSnapThreshold(raw); }
+    try { threshold = multitapSnapThreshold(raw); }
     catch(e){ return ["Error: the --threshold-ms value must be between 50 and 1000 milliseconds (got "+raw+")."]; }
-    threshold = snapped;
   }
   let cur;
-  try {
-    const f = okOrThrow(await request(CU.GET_MULTI_TAP_CONFIG));
-    cur = multitapUnpack(f.data);
-  } catch(e){
-    return ["Multi-tap settings are not supported by the current firmware."];
-  }
-  const newA = a.aTaps !== undefined ? MULTITAP_COUNT_BY_NAME[a.aTaps] : cur.tapsA;
-  const newB = a.bTaps !== undefined ? MULTITAP_COUNT_BY_NAME[a.bTaps] : cur.tapsB;
-  const newTh = threshold !== undefined ? threshold : cur.thresholdMs;
-  const changed = (newA !== cur.tapsA) || (newB !== cur.tapsB) || (newTh !== cur.thresholdMs);
-  if(changed){
-    try {
-      okOrThrow(await request(CU.SET_MULTI_TAP_CONFIG, multitapPack(newA, newB, newTh)));
-    } catch(e){
-      return ["Multi-tap settings are not supported by the current firmware."];
+  try { cur = multitapUnpack(okOrThrow(await request(CU.GET_MULTI_TAP_BINDINGS)).data); }
+  catch(e){ return ["Multi-tap bindings are not supported by the current firmware."]; }
+  const aFns = cur.a.slice(), bFns = cur.b.slice();
+  let changed = false;
+  let wroteShort = false;
+  if(a.taps !== undefined){
+    const taps = Number(a.taps);
+    const fn = BUTTON_FN_BY_NAME[a.fn];
+    if(taps === 1){
+      okOrThrow(await request(CU.SET_BUTTON_PRESS_CONFIG, [(a.a?"A":"B").charCodeAt(0), fn]));
+      wroteShort = true;
+    } else {
+      const fns = (a.a ? aFns : bFns);
+      fns[taps - 2] = fn;
+      changed = true;
     }
   }
-  const lines = [" - Multi-tap button configuration:"];
-  lines.push("   Button A taps : "+multitapLabel(newA)+(newA!==cur.tapsA ? " (was "+multitapLabel(cur.tapsA)+")" : ""));
-  lines.push("   Button B taps : "+multitapLabel(newB)+(newB!==cur.tapsB ? " (was "+multitapLabel(cur.tapsB)+")" : ""));
+  const newTh = threshold !== undefined ? threshold : cur.thresholdMs;
+  const thChanged = threshold !== undefined && threshold !== cur.thresholdMs;
+  if(changed || thChanged){
+    try { okOrThrow(await request(CU.SET_MULTI_TAP_BINDINGS, multitapPack(aFns, bFns, newTh))); }
+    catch(e){ return ["The device rejected the multi-tap settings; nothing was changed."]; }
+  }
+  const lines = [" - Multi-tap button bindings:"];
+  for(let t=2;t<=5;t++) lines.push("   Button A "+t+" taps : "+buttonFnName(aFns[t-2]));
+  for(let t=2;t<=5;t++) lines.push("   Button B "+t+" taps : "+buttonFnName(bFns[t-2]));
   lines.push("   Tap threshold : "+newTh+" ms"+(newTh!==cur.thresholdMs ? " (was "+cur.thresholdMs+" ms)" : ""));
-  if(changed) lines.push("Do not forget to store your settings in flash! (hw settings store)");
+  if(changed || thChanged || wroteShort) lines.push("Do not forget to store your settings in flash! (hw settings store)");
   return lines;
 });
 
@@ -2741,7 +2790,7 @@ function helpFor(node){
     lines.push("flags:");
     for(const s of node.specs){
       const label = s.positional ? "<"+s.dest+">" : s.names.join(", ")+(s.takesValue?" <value>":"");
-      lines.push("  "+label+(s.required?"  (required)":""));
+      lines.push("  "+label+(s.required?"  (required)":"")+(s.help?"  "+s.help:""));
     }
   }
   return lines;

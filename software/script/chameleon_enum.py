@@ -67,8 +67,11 @@ class Command(enum.IntEnum):
     # long-press-threshold IDs, which the official GUI gates on).
     GET_BOOTLOADER_VERSION = 1061
     GET_FREE_MEMORY = 1062
-    GET_MULTI_TAP_CONFIG = 1063
-    SET_MULTI_TAP_CONFIG = 1064
+    # 1063/1064 were GET/SET_MULTI_TAP_CONFIG (the v8 "short press after N
+    # taps" modifier). Replaced by the per-tap-count bindings below; the ids
+    # stay reserved.
+    GET_MULTI_TAP_BINDINGS = 1065
+    SET_MULTI_TAP_BINDINGS = 1066
 
     GET_BLE_NAME = 1043
     SET_BLE_NAME = 1044
