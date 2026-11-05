@@ -28,6 +28,7 @@ NRF_LOG_MODULE_REGISTER();
 
 #include "app_cmd.h"
 #include "app_button_tap.h"
+#include "app_button_edge.h"
 #include "ble_main.h"
 #include "bsp_delay.h"
 #include "bsp_time.h"
@@ -53,28 +54,31 @@ NRF_LOG_MODULE_REGISTER();
 #endif
 
 // Defining soft timers
-APP_TIMER_DEF(m_button_check_timer); // Timer for button debounce
 APP_TIMER_DEF(m_button_tap_timer);   // Timer for the multi-tap sequence expiry
 
 #define BTN_IDX_A      0
 #define BTN_IDX_B      1
 #define BTN_IDX_COUNT  2
 
-/* Per-button press state. The press timestamp must be per button: a shared
- * one made the long/short classification leak from one button to the other. */
-static uint32_t m_last_btn_press[BTN_IDX_COUNT] = {0, 0};        /* press ticks, per button */
-static bool m_is_btn_long_press[BTN_IDX_COUNT] = {false, false}; /* per button */
-static uint32_t m_btn_prev_release_ticks[BTN_IDX_COUNT] = {0, 0}; /* release ticks of the last completed short tap */
-static app_button_tap_state_t m_btn_tap_state[BTN_IDX_COUNT] = {{0, false}, {0, false}};
+/* A press held this long is a long press, not a tap. */
+#define BTN_LONG_PRESS_MS 1000u
+
+/* Per-button press state. The timestamps are EDGE timestamps: the ISR
+ * queues the edge, the main loop turns it into a gesture. */
+static uint32_t m_last_btn_press[BTN_IDX_COUNT] = {0, 0};        /* press EDGE ticks */
+static uint32_t m_btn_prev_release_ticks[BTN_IDX_COUNT] = {0, 0}; /* RELEASE EDGE ticks of the last tap */
+static app_button_tap_state_t m_btn_tap_state[BTN_IDX_COUNT] = {{0}, {0}};
+static app_button_gesture_state_t m_btn_gesture[BTN_IDX_COUNT];   /* current level segment */
+static app_button_edge_queue_t m_btn_edge_queue[BTN_IDX_COUNT];  /* one SPSC queue per button */
+/* Queue overflow: the ISR only flags it (and the tick of the lost edge),
+ * the main loop resyncs the gesture state to the pin. The flag and the tick
+ * are written in this order by the ISR, so a main loop that sees the flag
+ * also sees the tick. */
+static volatile uint32_t m_btn_overflow_ticks[BTN_IDX_COUNT] = {0, 0};
+static volatile bool m_btn_overflow[BTN_IDX_COUNT] = {false, false};
 static volatile bool m_btn_tap_check = false; /* set by the expiry timer, cleared by the main loop */
 
-static bool m_is_b_btn_press = false;
-static bool m_is_a_btn_press = false;
-
-static bool m_is_b_btn_release = false;
-static bool m_is_a_btn_release = false;
-
-static bool m_system_off_processing = false;
+static volatile bool m_system_off_processing = false;
 
 // NFC field generator state
 volatile bool m_is_field_on = false;
@@ -206,14 +210,38 @@ static void field_generator_rainbow_loop(void) {
 #endif
 
 /**@brief Button Matrix Events
+ *
+ * The ISR only captures the edge. The GPIOTE port/sense configuration is
+ * TOGGLE, so the `action` argument does NOT tell us the direction of the
+ * edge (nrfx passes the configured polarity): the level is sampled from
+ * the pin instead. The edge is queued for the main loop, which owns the
+ * tap state machine, the settings and the button functions.
  */
 static void button_pin_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action) {
+    UNUSED_PARAMETER(action);
     device_mode_t mode = get_device_mode();
     // Allow button operations in both tag and reader mode
-    if (mode == DEVICE_MODE_TAG || mode == DEVICE_MODE_READER) {
-        static nrf_drv_gpiote_pin_t pin_static;                                  // Use static internal variables to store the GPIO where the current event occurred
-        pin_static = pin;                                                        // Cache the button that currently triggers the event into an internal variable
-        app_timer_start(m_button_check_timer, APP_TIMER_TICKS(50), &pin_static); // Start timer anti-shake
+    if (mode != DEVICE_MODE_TAG && mode != DEVICE_MODE_READER) {
+        return;
+    }
+    if (m_system_off_processing) {
+        // if button press during shutdown, it's only to wake up quickly
+        m_system_off_processing = false;
+        NRF_LOG_INFO("BUTTON press during shutdown");
+        return;
+    }
+    int idx = (pin == BUTTON_2) ? BTN_IDX_A : BTN_IDX_B;
+    bool pressed = nrf_gpio_pin_read(pin) != 0;  /* the buttons are active high */
+    uint32_t ticks = app_timer_cnt_get();
+    app_button_edge_push_result_t push = app_button_edge_push(&m_btn_edge_queue[idx], pressed, ticks);
+    if (push == APP_BUTTON_EDGE_PUSH_FULL) {
+        NRF_LOG_ERROR("BUTTON edge queue full");
+        /* The queue lost edges: the main loop resyncs the gesture state to
+         * the pin, so the state can never be corrupt. The ISR must not
+         * write that state (the main loop reads and writes it), so it only
+         * flags the overflow here. The tick is written before the flag. */
+        m_btn_overflow_ticks[idx] = ticks;
+        m_btn_overflow[idx] = true;
     }
 }
 
@@ -229,76 +257,6 @@ static bool button_has_any_binding(char which) {
            || settings_has_multi_tap_binding(which);
 }
 
-/** @brief Button anti-shake timer
- * @param None
- * @return None
- */
-static void timer_button_event_handle(void *arg) {
-    // if button press during shutdown, it's only to wake up quickly
-    if (m_system_off_processing) {
-        m_system_off_processing = false;
-        NRF_LOG_INFO("BUTTON press during shutdown");
-        return;
-    }
-
-    nrf_drv_gpiote_pin_t pin = *(nrf_drv_gpiote_pin_t *)arg;
-
-    // Check here if the current GPIO is at the pressed level
-    if (nrf_gpio_pin_read(pin) == 1) {
-        if (pin == BUTTON_1) {
-            // The button must be registered when ANY binding is set: the
-            // short press, the long press or a multi-tap binding.
-            if (button_has_any_binding('b')) {
-                NRF_LOG_INFO("BUTTON_B_PRESS");
-                m_is_b_btn_press = true;
-                m_last_btn_press[BTN_IDX_B] = app_timer_cnt_get();
-            }
-        }
-        if (pin == BUTTON_2) {
-            if (button_has_any_binding('a')) {
-                NRF_LOG_INFO("BUTTON_A_PRESS");
-                m_is_a_btn_press = true;
-                m_last_btn_press[BTN_IDX_A] = app_timer_cnt_get();
-            }
-        }
-    }
-
-    if (nrf_gpio_pin_read(pin) == 0) {
-        if (pin == BUTTON_1 && m_is_b_btn_press == true) {
-            uint32_t now = app_timer_cnt_get();
-            uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press[BTN_IDX_B]);
-            bool is_long_press = ticks > APP_TIMER_TICKS(1000);
-            // If the button has no binding at all, we can't dispatch key event.
-            if (button_has_any_binding('b')) {
-                m_is_b_btn_release = true;
-                m_is_b_btn_press = false;
-                if (!is_long_press) {
-                    NRF_LOG_INFO("BUTTON_B_RELEASE_SHORT");
-                } else {
-                    NRF_LOG_INFO("BUTTON_B_RELEASE_LONG");
-                }
-                m_is_btn_long_press[BTN_IDX_B] = is_long_press;
-            }
-        }
-        if (pin == BUTTON_2 && m_is_a_btn_press == true) {
-            uint32_t now = app_timer_cnt_get();
-            uint32_t ticks = app_timer_cnt_diff_compute(now, m_last_btn_press[BTN_IDX_A]);
-            bool is_long_press = ticks > APP_TIMER_TICKS(1000);
-            if (button_has_any_binding('a')) {
-                m_is_a_btn_release = true;
-                m_is_a_btn_press = false;
-                if (!is_long_press) {
-                    NRF_LOG_INFO("BUTTON_A_RELEASE_SHORT");
-                } else {
-                    NRF_LOG_INFO("BUTTON_A_RELEASE_LONG");
-                }
-                m_is_btn_long_press[BTN_IDX_A] = is_long_press;
-            }
-        }
-    }
-
-}
-
 /* Forward declaration: the multi-tap expiry timer is created in button_init()
  * but its handler lives with the rest of the tap state machine. */
 static void timer_button_tap_expired(void *arg);
@@ -308,13 +266,15 @@ static void timer_button_tap_expired(void *arg);
 static void button_init(void) {
     ret_code_t err_code;
 
-    // Non-exact timer for initializing button anti-shake
-    err_code = app_timer_create(&m_button_check_timer, APP_TIMER_MODE_SINGLE_SHOT, timer_button_event_handle);
-    APP_ERROR_CHECK(err_code);
-
     // Single shot timer for the multi-tap sequence expiry
     err_code = app_timer_create(&m_button_tap_timer, APP_TIMER_MODE_SINGLE_SHOT, timer_button_tap_expired);
     APP_ERROR_CHECK(err_code);
+
+    // One edge queue per button: the ISR is the producer, the main loop the consumer
+    for (int i = 0; i < BTN_IDX_COUNT; i++) {
+        app_button_edge_queue_init(&m_btn_edge_queue[i]);
+        app_button_gesture_init(&m_btn_gesture[i]);
+    }
 
     // Configure SENSE mode, select false for sense configuration
     nrf_drv_gpiote_in_config_t in_config = NRFX_GPIOTE_CONFIG_IN_SENSE_TOGGLE(false);
@@ -1026,7 +986,7 @@ static void button_tap_timer_restart(void) {
         if (m_btn_tap_state[i].count == 0) {
             continue;
         }
-        bool held = (i == BTN_IDX_A) ? m_is_a_btn_press : m_is_b_btn_press;
+        bool held = m_btn_gesture[i].pressed;
         if (held) {
             continue;
         }
@@ -1062,12 +1022,12 @@ static void timer_button_tap_expired(void *arg) {
  * The inter-tap gap is measured from the previous tap's RELEASE to this tap's
  * PRESS (the standard double-tap definition), with the SDK's wrap-safe diff.
  *
- * @param idx   Button index (BTN_IDX_A / BTN_IDX_B).
- * @param which Button type, 'a' or 'b'.
+ * @param idx           Button index (BTN_IDX_A / BTN_IDX_B).
+ * @param which         Button type, 'a' or 'b'.
+ * @param release_ticks Exact timestamp of the RELEASE edge.
  */
-static void button_tap_on_short_release(int idx, char which) {
+static void button_tap_on_short_release(int idx, char which, uint32_t release_ticks) {
     uint32_t threshold_ms = settings_get_multi_tap_threshold_ms();
-    uint32_t now_ticks = app_timer_cnt_get();
 
     /* A new sequence starts when the gap since the previous release exceeds
      * the threshold. The expiry timer normally fired already; this is the
@@ -1088,48 +1048,115 @@ static void button_tap_on_short_release(int idx, char which) {
     app_button_tap_result_t r = app_button_tap_on_short_press(&m_btn_tap_state[idx],
                                                               settings_get_button_press_config(which),
                                                               btn_bindings);
-    m_btn_prev_release_ticks[idx] = now_ticks;
+    m_btn_prev_release_ticks[idx] = release_ticks;   /* the RELEASE EDGE time */
     if (r.run != APP_BUTTON_TAP_RUN_NONE) {
         run_button_function_by_settings((settings_button_function_t)r.function);
     }
     button_tap_timer_restart();
 }
 
-/**@brief button press event process
- */
 extern bool g_usb_led_marquee_enable;
-static void button_press_process(void) {
-    // Make sure that one of the AB buttons has a click event
-    if (m_is_b_btn_release || m_is_a_btn_release) {
-        if (m_is_a_btn_release) {
-            if (!m_is_btn_long_press[BTN_IDX_A]) {
-                button_tap_on_short_release(BTN_IDX_A, 'a');
-            } else {
-                run_button_function_by_settings(settings_get_long_button_press_config('a'));
-                /* A long press is a separate gesture: it never counts as a
-                 * tap and it resets the pending multi-tap sequence. */
-                m_btn_tap_state[BTN_IDX_A].count = 0;
-                m_btn_tap_state[BTN_IDX_A].fired = false;
+
+/**@brief Turn one button edge into a gesture (main loop).
+ *
+ * @param idx  Button index (BTN_IDX_A / BTN_IDX_B).
+ * @param edge The edge: level and exact edge timestamp.
+ */
+static void button_process_edge(int idx, const app_button_edge_t *edge) {
+    char which = (idx == BTN_IDX_A) ? 'a' : 'b';
+    app_button_gesture_state_t *gesture = &m_btn_gesture[idx];
+    bool was_pressed = gesture->level_known && gesture->pressed;
+
+    app_button_gesture_kind_t kind = app_button_gesture_on_edge(gesture,
+                                                                 edge->pressed,
+                                                                 edge->ticks,
+                                                                 APP_TIMER_TICKS(APP_BUTTON_GESTURE_MIN_TAP_MS),
+                                                                 APP_TIMER_TICKS(BTN_LONG_PRESS_MS));
+
+    /* The button must be registered when ANY binding is set: the short
+     * press, the long press or a multi-tap binding. */
+    if (!button_has_any_binding(which)) {
+        return;
+    }
+
+    if (!was_pressed && gesture->pressed) {
+        m_last_btn_press[idx] = edge->ticks;
+        NRF_LOG_INFO("BUTTON_%s_PRESS", (which == 'a') ? "A" : "B");
+    }
+
+    if (kind == APP_BUTTON_GESTURE_NONE) {
+        return;
+    }
+
+    if (kind == APP_BUTTON_GESTURE_LONG) {
+        NRF_LOG_INFO("BUTTON_%s_RELEASE_LONG", (which == 'a') ? "A" : "B");
+        run_button_function_by_settings(settings_get_long_button_press_config(which));
+        /* A long press is a separate gesture: it never counts as a tap and
+         * it resets the pending multi-tap sequence. */
+        m_btn_tap_state[idx].count = 0;
+        button_tap_timer_restart();
+    } else {
+        NRF_LOG_INFO("BUTTON_%s_RELEASE_SHORT", (which == 'a') ? "A" : "B");
+        button_tap_on_short_release(idx, which, edge->ticks);
+    }
+
+    /* Disable led marquee for usb at button pressed. */
+    g_usb_led_marquee_enable = false;
+    /* Re-delay into hibernation (unless field is on) */
+    if (!m_is_field_on) {
+        sleep_timer_start(settings_get_sleep_timeout());
+    }
+}
+
+/**@brief Drain the per-button edge queues (main loop).
+ *
+ * The ISR is the only producer and the main loop the only consumer, so the
+ * two buttons never share state.
+ *
+ * A queue overflow means edges were lost. The edges that are still queued
+ * are older than the overflow and are dropped, and the gesture state is
+ * resynced to the authoritative pin level. The resync happens here, in the
+ * main loop: the ISR never writes the gesture state.
+ */
+static void button_edge_queue_process(void) {
+    for (int idx = 0; idx < BTN_IDX_COUNT; idx++) {
+        bool overflow = m_btn_overflow[idx];
+        uint32_t overflow_tick = m_btn_overflow_ticks[idx];
+        app_button_edge_t edge;
+        while (app_button_edge_pop(&m_btn_edge_queue[idx], &edge)) {
+            if (overflow &&
+                app_timer_cnt_diff_compute(edge.ticks, overflow_tick) > (APP_TIMER_MAX_CNT_VAL / 2)) {
+                continue;   /* older than the overflow: stale */
             }
-            m_is_a_btn_release = false;
+            button_process_edge(idx, &edge);
         }
-        if (m_is_b_btn_release) {
-            if (!m_is_btn_long_press[BTN_IDX_B]) {
-                button_tap_on_short_release(BTN_IDX_B, 'b');
-            } else {
-                run_button_function_by_settings(settings_get_long_button_press_config('b'));
-                m_btn_tap_state[BTN_IDX_B].count = 0;
-                m_btn_tap_state[BTN_IDX_B].fired = false;
-            }
-            m_is_b_btn_release = false;
+        if (!overflow) {
+            continue;
         }
-        // Disable led marquee for usb at button pressed.
-        g_usb_led_marquee_enable = false;
-        // Re-delay into hibernation (unless field is on)
-        if (!m_is_field_on) {
-            sleep_timer_start(settings_get_sleep_timeout());
+        /* Resync: the authoritative level of the pin replaces the state the
+         * lost edges would have produced. The resync comes after the drain
+         * on purpose: an edge that is older than the resync must not be
+         * measured against it. */
+        bool pressed = nrf_gpio_pin_read((idx == BTN_IDX_A) ? BUTTON_2 : BUTTON_1) != 0;
+        m_btn_gesture[idx].level_known = true;
+        m_btn_gesture[idx].pressed = pressed;
+        m_btn_gesture[idx].segment_ticks = app_timer_cnt_get();
+        /* The flag is cleared only when the resync is done. A second
+         * overflow during the drain has a newer tick: the flag stays set
+         * and the next drain resyncs again, so it is never lost. */
+        m_btn_overflow[idx] = false;
+        if (m_btn_overflow_ticks[idx] != overflow_tick) {
+            m_btn_overflow[idx] = true;
         }
     }
+}
+
+/**@brief button press event process
+ */
+static void button_press_process(void) {
+    /* Drain the edge queues first: a tap that arrives in the same loop
+     * iteration has to be counted before the expiry check below. */
+    button_edge_queue_process();
 
     /* Multi-tap sequence expiry. This runs AFTER the release handling above,
      * so a tap that arrives in the same loop iteration is counted first. A
@@ -1143,8 +1170,7 @@ static void button_press_process(void) {
             if (m_btn_tap_state[i].count == 0) {
                 continue;
             }
-            bool held = (i == BTN_IDX_A) ? m_is_a_btn_press : m_is_b_btn_press;
-            if (held) {
+            if (m_btn_gesture[i].pressed) {
                 continue;
             }
             if (app_timer_cnt_diff_compute(now, m_btn_prev_release_ticks[i]) < threshold_ticks) {

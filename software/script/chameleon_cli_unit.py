@@ -2036,6 +2036,21 @@ def multitap_count_text(count: int) -> str:
     return f"{count} tap" + ("" if count == 1 else "s")
 
 
+def print_multitap_table(bindings, previous_threshold_ms=None) -> None:
+    """Print the 10-value multi-tap table (8 slots + threshold)."""
+    print(" - Multi-tap button bindings:")
+    for button, key in ((ButtonType.A, 'a'), (ButtonType.B, 'b')):
+        fns = bindings[key]
+        for taps in range(MULTITAP_BIND_TAP_MIN, MULTITAP_BIND_TAP_MAX + 1):
+            fn = ButtonPressFunction(fns[taps - MULTITAP_BIND_TAP_MIN])
+            print(
+                f"   {color_string((CG, f'Button {button.name} {multitap_count_text(taps)}'))} : {fn}"
+            )
+    threshold = bindings['threshold_ms']
+    suffix = f" (was {previous_threshold_ms} ms)" if previous_threshold_ms is not None else ""
+    print(f"   {color_string((CG, 'Tap threshold'))} : {threshold} ms" + suffix)
+
+
 @hw_settings.command("btnpress")
 class HWButtonSettingsGet(DeviceRequiredUnit):
 
@@ -2066,8 +2081,8 @@ class HWButtonSettingsGet(DeviceRequiredUnit):
             help=(
                 "Tap count for --multitap: 1 = the short-press binding, "
                 "2-5 = a multi-tap binding (factory default: all disabled); "
-                "the action of a tap count waits for the threshold when a "
-                "higher tap count is bound on the same button"
+                "a 2-5 tap action always waits for the threshold, because "
+                "the action is chosen by the final tap count"
             ),
         )
         function_names = [f.name for f in list(ButtonPressFunction)]
@@ -2116,10 +2131,17 @@ class HWButtonSettingsGet(DeviceRequiredUnit):
                     f" - Successfully set function '{function}' to Button {button.name} 1 tap (short-press)"
                 )
             else:
-                self.cmd.set_multi_tap_binding(button, args.taps, function)
+                try:
+                    self.cmd.set_multi_tap_binding(button, args.taps, function)
+                except chameleon_com.CMDInvalidException:
+                    print("Multi-tap bindings are not supported by the current firmware.")
+                    return
                 print(
                     f" - Successfully set function '{function}' to Button {button.name} {multitap_count_text(args.taps)}"
                 )
+                # Show the resulting table: a wrong slot or an overwritten
+                # binding has to be visible immediately.
+                print_multitap_table(self.cmd.get_multi_tap_bindings())
             print(color_string((CY, "Do not forget to store your settings in flash!")))
             return
 
@@ -2203,10 +2225,11 @@ class HWSettingsMultiTap(DeviceRequiredUnit):
             "Consecutive taps must be no more than the threshold apart "
             f"({MULTITAP_MIN_THRESHOLD_MS}-{MULTITAP_MAX_THRESHOLD_MS} ms, "
             f"factory default {MULTITAP_DEFAULT_THRESHOLD_MS} ms). "
-            "A single tap runs the button's short-press function; it is "
-            "delayed until the threshold expires when a multi-tap binding is "
-            "set on that button. When a higher tap count is bound on the same "
-            "button, the lower one also waits for the threshold."
+            "A 2-5 tap action always waits for the threshold to expire: the "
+            "action is chosen by the final tap count, so a 3-tap gesture "
+            "never runs the 2-tap action. A single tap runs the button's "
+            "short-press function; it is delayed until the threshold expires "
+            "when a multi-tap binding is set on that button."
         )
         button_group = parser.add_mutually_exclusive_group()
         button_group.add_argument("-a", "-A", action="store_true", help="Button A")
@@ -2219,8 +2242,8 @@ class HWSettingsMultiTap(DeviceRequiredUnit):
             choices=[1, 2, 3, 4, 5],
             help=(
                 "Tap count to bind: 1 = the short-press binding, 2-5 = a "
-                "multi-tap binding; the action of a tap count waits for the "
-                "threshold when a higher tap count is bound on the same button"
+                "multi-tap binding; a 2-5 tap action always waits for the "
+                "threshold, because the action is chosen by the final tap count"
             ),
         )
         function_names = [f.name for f in list(ButtonPressFunction)]
@@ -2352,20 +2375,9 @@ class HWSettingsMultiTap(DeviceRequiredUnit):
                 )
                 return
 
-        print(" - Multi-tap button bindings:")
-        for button, fns in ((ButtonType.A, new_a), (ButtonType.B, new_b)):
-            for taps in range(MULTITAP_BIND_TAP_MIN, MULTITAP_BIND_TAP_MAX + 1):
-                fn = ButtonPressFunction(fns[taps - MULTITAP_BIND_TAP_MIN])
-                print(
-                    f"   {color_string((CG, f'Button {button.name} {multitap_count_text(taps)}'))} : {fn}"
-                )
-        print(
-            f"   {color_string((CG, 'Tap threshold'))} : {new_threshold} ms"
-            + (
-                f" (was {cur['threshold_ms']} ms)"
-                if new_threshold != cur['threshold_ms']
-                else ""
-            )
+        print_multitap_table(
+            {'a': new_a, 'b': new_b, 'threshold_ms': new_threshold},
+            cur['threshold_ms'] if new_threshold != cur['threshold_ms'] else None,
         )
         if changed or threshold_changed or wrote_short:
             print(color_string((CY, "Do not forget to store your settings in flash!")))

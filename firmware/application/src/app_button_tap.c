@@ -1,18 +1,54 @@
 #include "app_button_tap.h"
 
+/* The edge timestamps are the raw 24 bit RTC counter: the difference has to
+ * be masked so a counter wrap does not turn into a huge duration. */
+#define APP_BUTTON_TICK_MASK 0x00FFFFFFu
+
+static uint32_t app_button_ticks_diff(uint32_t a, uint32_t b) {
+    return (a - b) & APP_BUTTON_TICK_MASK;
+}
+
+void app_button_gesture_init(app_button_gesture_state_t *st) {
+    st->level_known = false;
+    st->pressed = false;
+    st->segment_ticks = 0;
+}
+
+app_button_gesture_kind_t app_button_gesture_on_edge(app_button_gesture_state_t *st,
+                                                     bool pressed, uint32_t ticks,
+                                                     uint32_t min_tap_ticks,
+                                                     uint32_t long_press_ticks) {
+    if (!st->level_known) {
+        /* The first edge only starts a segment: its length is unknown. */
+        st->level_known = true;
+        st->pressed = pressed;
+        st->segment_ticks = ticks;
+        return APP_BUTTON_GESTURE_NONE;
+    }
+    if (pressed == st->pressed) {
+        return APP_BUTTON_GESTURE_NONE;   /* no transition */
+    }
+
+    uint32_t duration = app_button_ticks_diff(ticks, st->segment_ticks);
+    bool was_pressed = st->pressed;
+    st->pressed = pressed;
+    st->segment_ticks = ticks;
+
+    if (!was_pressed) {
+        return APP_BUTTON_GESTURE_NONE;   /* a released segment is never a gesture */
+    }
+    if (duration < min_tap_ticks) {
+        return APP_BUTTON_GESTURE_NONE;   /* contact bounce */
+    }
+    if (duration >= long_press_ticks) {
+        return APP_BUTTON_GESTURE_LONG;
+    }
+    return APP_BUTTON_GESTURE_SHORT;
+}
+
 static bool bindings_have_any(const uint8_t *bindings) {
     for (uint8_t i = 0; i < APP_BUTTON_TAP_BIND_COUNT; i++) {
         if (bindings[i] != 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/* Is any tap count above `count` bound? */
-static bool bindings_have_any_above(const uint8_t *bindings, uint8_t count) {
-    for (uint8_t taps = (uint8_t)(count + 1); taps <= APP_BUTTON_TAP_MAX_COUNT; taps++) {
-        if (bindings[taps - APP_BUTTON_TAP_BIND_MIN_COUNT] != 0) {
             return true;
         }
     }
@@ -29,12 +65,6 @@ app_button_tap_result_t app_button_tap_on_short_press(app_button_tap_state_t *st
     }
     r.count = state->count;
 
-    if (state->fired) {
-        /* The sequence already ran: keep it open until the threshold expires
-         * so a further tap does not start a fresh 1-tap sequence. */
-        return r;
-    }
-
     if (state->count == 1) {
         /* The 1-tap action has to wait for the threshold when a multi-tap
          * gesture is possible on this button, otherwise a 2-tap press would
@@ -46,27 +76,14 @@ app_button_tap_result_t app_button_tap_on_short_press(app_button_tap_state_t *st
                 r.run = APP_BUTTON_TAP_RUN_SHORT;
                 r.function = short_fn;
                 state->count = 0;
-                state->fired = false;
             }
         }
         return r;
     }
 
-    uint8_t fn = bindings[state->count - APP_BUTTON_TAP_BIND_MIN_COUNT];
-    if (fn == 0) {
-        /* No function is bound to this tap count. Keep waiting: the user may
-         * still be tapping and a higher count may be bound. */
-        return r;
-    }
-    if (bindings_have_any_above(bindings, state->count)) {
-        /* A higher tap count is bound, so the user may still be tapping: this
-         * action only runs when the threshold expires and the final tap count
-         * is known. */
-        return r;
-    }
-    r.run = APP_BUTTON_TAP_RUN_BINDING;
-    r.function = fn;
-    state->fired = true;
+    /* A multi-tap action NEVER runs on the tap itself: the final tap count
+     * is only known when the threshold expires. app_button_tap_timeout()
+     * runs the binding of the final count. */
     return r;
 }
 
@@ -74,7 +91,7 @@ app_button_tap_result_t app_button_tap_timeout(app_button_tap_state_t *state,
                                                uint8_t short_fn,
                                                const uint8_t *bindings) {
     app_button_tap_result_t r = {APP_BUTTON_TAP_RUN_NONE, 0, state->count};
-    if (!state->fired && (state->count > 0)) {
+    if (state->count > 0) {
         if (state->count == 1) {
             if (short_fn != 0) {
                 r.run = APP_BUTTON_TAP_RUN_SHORT;
@@ -89,7 +106,6 @@ app_button_tap_result_t app_button_tap_timeout(app_button_tap_state_t *state,
         }
     }
     state->count = 0;
-    state->fired = false;
     return r;
 }
 

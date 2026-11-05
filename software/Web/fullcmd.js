@@ -484,7 +484,26 @@ wire("d_setpairreq", $("d_btnResult"), async () => {
 });
 
 const dMt = $("d_mtResult");
-const MT_FN_SEL = ["d_mtA2","d_mtA3","d_mtA4","d_mtA5","d_mtB2","d_mtB3","d_mtB4","d_mtB5"];
+/* The multi-tap slots: the select element and the payload key of every
+ * slot (index 0 = tap count 2). */
+const MT_FN_SEL = [
+  {id: "d_mtA2", key: "a0"}, {id: "d_mtA3", key: "a1"},
+  {id: "d_mtA4", key: "a2"}, {id: "d_mtA5", key: "a3"},
+  {id: "d_mtB2", key: "b0"}, {id: "d_mtB3", key: "b1"},
+  {id: "d_mtB4", key: "b2"}, {id: "d_mtB5", key: "b3"},
+];
+/* Slots the user actually changed. "Set" writes back only those slots, so a
+ * "Set" without a "Get" cannot clear the bindings the device already has
+ * (the selects default to "Disabled"). */
+const MT_DIRTY = new Set();
+let MT_THRESHOLD_DIRTY = false;
+for (const slot of MT_FN_SEL) {
+  const el = $(slot.id);
+  if (el) el.addEventListener("change", () => MT_DIRTY.add(slot.key));
+}
+const mtTh = $("d_mtTh");
+if (mtTh) mtTh.addEventListener("change", () => { MT_THRESHOLD_DIRTY = true; });
+
 wire("d_getmt", dMt, async () => {
   try {
     const f = okOrThrow(await request(CU.GET_MULTI_TAP_BINDINGS));
@@ -492,6 +511,8 @@ wire("d_getmt", dMt, async () => {
     cfg.a.forEach((fn, i) => { $("d_mtA" + (i + 2)).value = String(fn); });
     cfg.b.forEach((fn, i) => { $("d_mtB" + (i + 2)).value = String(fn); });
     $("d_mtTh").value = String(cfg.thresholdMs);
+    MT_DIRTY.clear();
+    MT_THRESHOLD_DIRTY = false;
     showResult(dMt, "Multi-tap bindings loaded: A "+cfg.a.join(",")+" | B "+cfg.b.join(",")+", threshold "+cfg.thresholdMs+" ms");
   } catch(e){
     const msg = String(e && e.message || e);
@@ -502,11 +523,20 @@ wire("d_getmt", dMt, async () => {
 });
 wire("d_setmt", dMt, async () => {
   try {
-    const a = MT_FN_SEL.slice(0, 4).map(id => Number($(id).value));
-    const b = MT_FN_SEL.slice(4).map(id => Number($(id).value));
-    const threshold = multitapSnapThreshold(Number($("d_mtTh").value));
-    okOrThrow(await request(CU.SET_MULTI_TAP_BINDINGS, multitapPack(a, b, threshold)));
-    showResult(dMt, "Multi-tap bindings set: A "+a.join(",")+" | B "+b.join(",")+", threshold "+threshold+" ms. Do not forget to save settings to flash (D5).", "ok");
+    /* Read the device table first and write back only the dirty slots. */
+    const cur = multitapUnpack(okOrThrow(await request(CU.GET_MULTI_TAP_BINDINGS)).data);
+    const selected = {};
+    for (const slot of MT_FN_SEL) selected[slot.key] = Number($(slot.id).value);
+    const payload = multitapBuildPayload(cur, MT_DIRTY, selected, MT_THRESHOLD_DIRTY, Number($("d_mtTh").value));
+    okOrThrow(await request(CU.SET_MULTI_TAP_BINDINGS, multitapPack(payload.a, payload.b, payload.thresholdMs)));
+    /* Show the state the device holds now: the untouched slots keep the
+     * value the device had, not the "Disabled" of the select. */
+    payload.a.forEach((fn, i) => { $("d_mtA" + (i + 2)).value = String(fn); });
+    payload.b.forEach((fn, i) => { $("d_mtB" + (i + 2)).value = String(fn); });
+    $("d_mtTh").value = String(payload.thresholdMs);
+    MT_DIRTY.clear();
+    MT_THRESHOLD_DIRTY = false;
+    showResult(dMt, "Multi-tap bindings set: A "+payload.a.join(",")+" | B "+payload.b.join(",")+", threshold "+payload.thresholdMs+" ms. Do not forget to save settings to flash (D5).", "ok");
   } catch(e){
     const msg = String(e && e.message || e);
     if(msg.indexOf("doesn't declare")>=0 || msg.indexOf("NOT_IMPLEMENTED")>=0 || msg.indexOf("PAR_ERR")>=0)

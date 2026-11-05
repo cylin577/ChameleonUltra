@@ -714,3 +714,6 @@ firmware/compile_commands.json
 firmware/application/compile_commands.json
 software/src/target_arch_detect.c
 firmware/standalone_modes.mk
+firmware/application/src/tests/test_app_button_tap
+firmware/application/src/tests/test_app_button_edge
+firmware/application/src/tests/test_app_button_tap_path

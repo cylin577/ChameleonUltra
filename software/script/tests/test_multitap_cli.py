@@ -40,11 +40,14 @@ class FakeCmd:
         self.current = {'a': tuple(a), 'b': tuple(b), 'threshold_ms': threshold_ms}
 
     def set_multi_tap_binding(self, button, tap_count, function):
-        a = list(self.current['a'])
-        b = list(self.current['b'])
+        # mirrors the real command layer: read-modify-write, so an old
+        # firmware that has no multi-tap support raises CMDInvalidException
+        cur = self.get_multi_tap_bindings()
+        a = list(cur['a'])
+        b = list(cur['b'])
         slot = tap_count - 2
         (a if button == ButtonType.A else b)[slot] = int(function)
-        self.set_multi_tap_bindings(tuple(a), tuple(b), self.current['threshold_ms'])
+        self.set_multi_tap_bindings(tuple(a), tuple(b), cur['threshold_ms'])
 
     def get_button_press_config(self, button):
         return 1
@@ -177,18 +180,16 @@ class MultiTapCli(unittest.TestCase):
         self.assertIn("1 = the short-press binding", btnpress_help)
 
     def test_help_text_states_the_threshold_latency_rule(self):
-        # a tap count waits for the threshold when a higher tap count is
-        # bound on the same button
+        # a 2-5 tap action always waits for the threshold: the action is
+        # chosen by the final tap count
         help_text = " ".join(HWSettingsMultiTap().args_parser().format_help().split())
         self.assertIn(
-            "the action of a tap count waits for the threshold when a higher "
-            "tap count is bound on the same button",
+            "2-5 tap action always waits for the threshold",
             help_text,
         )
         btnpress_help = " ".join(HWButtonSettingsGet().args_parser().format_help().split())
         self.assertIn(
-            "the action of a tap count waits for the threshold when a higher "
-            "tap count is bound on the same button",
+            "2-5 tap action always waits for the threshold",
             btnpress_help,
         )
 
@@ -350,6 +351,32 @@ class MultiTapCli(unittest.TestCase):
         self.assertIn("Button B 2 taps", printed)
         self.assertIn("Button B 5 taps", printed)
         self.assertIn("300 ms", printed)
+        self.assertEqual(fake.written, [])
+
+    def test_btnpress_multitap_prints_the_resulting_table(self):
+        fake = FakeCmd(bindings_a=(4, 0, 0, 0), bindings_b=(0, 0, 0, 9))
+        unit = make_unit(fake, HWButtonSettingsGet)
+        args = unit.args_parser().parse_args(["--multitap", "-a", "--taps", "3", "-f", "BATTERY"])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            unit.on_exec(args)
+        printed = out.getvalue()
+        self.assertIn("Button A 2 taps", printed)
+        self.assertIn("Button A 3 taps", printed)
+        self.assertIn("Button B 5 taps", printed)
+        self.assertIn("250 ms", printed)
+
+    def test_btnpress_multitap_on_old_firmware_reports_unsupported(self):
+        fake = FakeCmd(supported=False)
+        unit = make_unit(fake, HWButtonSettingsGet)
+        args = unit.args_parser().parse_args(["--multitap", "-a", "--taps", "3", "-f", "BATTERY"])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            unit.on_exec(args)
+        self.assertIn(
+            "Multi-tap bindings are not supported by the current firmware.",
+            out.getvalue(),
+        )
         self.assertEqual(fake.written, [])
 
 

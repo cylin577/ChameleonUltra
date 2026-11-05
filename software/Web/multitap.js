@@ -32,6 +32,16 @@ function multitapSnapThreshold(ms) {
     throw new Error("threshold out of range");
   return snapped;
 }
+/* Snap a threshold that comes from the device into the valid range
+ * (50..1000 ms, 10 ms steps): a corrupt stored value must not make the
+ * "Set" fail, the device rejects such a value with STATUS_PAR_ERR. */
+function multitapClampThreshold(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return MULTITAP_DEFAULT_THRESHOLD_MS;
+  let raw = Math.trunc(ms);
+  if (raw < MULTITAP_MIN_THRESHOLD_MS) raw = MULTITAP_MIN_THRESHOLD_MS;
+  if (raw > MULTITAP_MAX_THRESHOLD_MS) raw = MULTITAP_MAX_THRESHOLD_MS;
+  return Math.floor(raw / MULTITAP_THRESHOLD_UNIT_MS) * MULTITAP_THRESHOLD_UNIT_MS;
+}
 function multitapCheckFunction(fn) {
   if (!Number.isInteger(fn) || fn < 0 || fn > 9) throw new Error("invalid button function");
   return fn;
@@ -57,6 +67,56 @@ function multitapUnpack(bytes) {
   return {
     a: [bytes[0], bytes[1], bytes[2], bytes[3]],
     b: [bytes[4], bytes[5], bytes[6], bytes[7]],
-    thresholdMs: (bytes[8] | (bytes[9] << 8)),
+    /* A corrupt stored threshold is clamped here, so every caller (the
+     * Device tab and the terminal) works with a value the device accepts. */
+    thresholdMs: multitapClampThreshold(bytes[8] | (bytes[9] << 8)),
+  };
+}
+
+/* Merge the slots the user actually changed into the device's current table.
+ * overrides: [{index, value}] with index 0..3 = tap count 2..5.
+ * The device table is never overwritten wholesale, so a "Set" without a
+ * "Get" can no longer clear the slots the user did not touch. */
+function multitapMergeSlots(current, overrides) {
+  if (!Array.isArray(current) || current.length !== MULTITAP_BIND_SLOTS)
+    throw new Error("invalid current bindings");
+  const out = current.slice();
+  for (const o of (overrides || [])) {
+    if (!o || !Number.isInteger(o.index) || o.index < 0 || o.index >= MULTITAP_BIND_SLOTS)
+      throw new Error("invalid override index");
+    out[o.index] = multitapCheckFunction(o.value);
+  }
+  return out;
+}
+
+/* Build the payload of a "Set" from the device table and the slots the user
+ * changed.
+ *   deviceSlots:      {a: [4 fn], b: [4 fn], thresholdMs} (multitapUnpack)
+ *   dirtySlots:       the slot keys the user changed: "a0".."a3" and "b0".."b3"
+ *                     (index 0 = tap count 2)
+ *   selectedSlots:    {a0: fn, a1: fn, ...} the current value of every slot
+ *   thresholdDirty:   true when the user changed the threshold
+ *   selectedThreshold: the threshold the user selected
+ * The slots the user did not touch keep the value the device holds and the
+ * threshold is preserved unless it was changed explicitly. */
+function multitapBuildPayload(deviceSlots, dirtySlots, selectedSlots, thresholdDirty, selectedThreshold) {
+  if (!deviceSlots || !Array.isArray(deviceSlots.a) || !Array.isArray(deviceSlots.b))
+    throw new Error("invalid device slots");
+  const overridesA = [], overridesB = [];
+  for (const key of (dirtySlots || [])) {
+    if (!selectedSlots || !Object.prototype.hasOwnProperty.call(selectedSlots, key))
+      throw new Error("unknown slot " + key);
+    const button = key[0];
+    const index = Number(key.slice(1));
+    if ((button !== "a" && button !== "b") || !Number.isInteger(index) ||
+        index < 0 || index >= MULTITAP_BIND_SLOTS)
+      throw new Error("invalid slot key");
+    const value = multitapCheckFunction(selectedSlots[key]);
+    (button === "a" ? overridesA : overridesB).push({index: index, value: value});
+  }
+  return {
+    a: multitapMergeSlots(deviceSlots.a, overridesA),
+    b: multitapMergeSlots(deviceSlots.b, overridesB),
+    thresholdMs: thresholdDirty ? multitapSnapThreshold(selectedThreshold) : multitapClampThreshold(deviceSlots.thresholdMs),
   };
 }

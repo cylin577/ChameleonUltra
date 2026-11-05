@@ -536,7 +536,7 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
         <button class="ghost small" id="d_getmt">Get</button>
         <button class="small" id="d_setmt">Set</button>
       </div>
-      <div class="det">A single tap runs the button's short-press function (the row above); tap counts 2-5 run the function bound in the table. The gap between two taps is measured from one tap's release to the next tap's press and must not exceed the threshold (50-1000 ms, stored in 10 ms steps). While a 2-5 tap binding is set, a single tap waits for the threshold before it runs. When a higher tap count is bound on the same button, the lower one also waits for the threshold. Bindings and the threshold are held in RAM until you "Save settings" (D5).</div>
+      <div class="det">A single tap runs the button's short-press function (the row above); tap counts 2-5 run the function bound in the table. The gap between two taps is measured from one tap's release to the next tap's press and must not exceed the threshold (50-1000 ms, stored in 10 ms steps). A 2-5 tap action always waits for the threshold to expire, because the action is chosen by the final tap count; a single tap runs the short-press function, also delayed until the threshold expires when a multi-tap binding is set on that button. Bindings and the threshold are held in RAM until you "Save settings" (D5).</div>
       <div class="result" id="d_mtResult"></div>
       <div class="result" id="d_btnResult"></div>
     </div>
@@ -1388,8 +1388,8 @@ AABBCCDDEEFF</textarea></label>
 <script src="button_capabilities.js?v=3"></script>
 <script src="disasm_thumb.js?v=1"></script>
 <script src="hf14ainfo.js?v=1"></script>
-<script src="multitap.js?v=2"></script>
-<script src="fullcmd.js?v=26"></script>
+<script src="multitap.js?v=4"></script>
+<script src="fullcmd.js?v=28"></script>
 <script src="terminal.js?v=20"></script>
 </body>
 </html>
