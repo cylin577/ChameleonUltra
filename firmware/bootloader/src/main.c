@@ -273,7 +273,6 @@ int main(void) {
             break;
         }
     }
-    bool button1 = nrf_gpio_pin_read(BUTTON_1) == 1;
     if (button2 || app_hung) {
         NRF_POWER->GPREGRET = BOOTLOADER_DFU_UF2_MAGIC;
         uf2_mode = true;
@@ -285,7 +284,8 @@ int main(void) {
      * resets the port mid-flash. Set before nrf_bootloader_init. */
     uf2_set_mode(uf2_mode);
     init_leds();
-    if (app_hung || button1) {
+    /* Bark only on a real watchdog reset: a button press at reset is not a hang. */
+    if (app_hung) {
         bl_egg_play();   /* the watchdog barks */
     }
 

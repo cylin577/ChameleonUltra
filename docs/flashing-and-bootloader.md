@@ -137,11 +137,15 @@ The bootloader can be reached whatever state the application is in:
   CDC DFU mode as if BUTTON_2 were held. It stays for the 30 s DFU inactivity
   timeout, then starts the app again, so a hanging app cycles between a short
   flashable window and the hang. `hw flash application.hex --no-enter` works in
-  that window.
+  that window. A real watchdog reset also plays the boot bark on the slot LEDs
+  (red scan, three barks, then the bootloader version in binary). The bark
+  means the app hung, so it never plays for a button press.
 * **Button** - hold BUTTON_2 (A) while plugging in USB, or at any reset with USB
   connected: UF2 + CDC DFU mode. Without USB the button is ignored.
   With the watchdog above, a hung app resets within 10 s, so the next reset
-  picks up the button.
+  picks up the button. Holding BUTTON_1 (B) at reset lights no LEDs and does
+  not delay the boot. With USB attached it still selects the legacy signed CDC
+  DFU path.
 * **Invalid app** - an interrupted or failed raw/UF2 flash leaves the app
   marked invalid, so the bootloader stays in DFU mode.
 

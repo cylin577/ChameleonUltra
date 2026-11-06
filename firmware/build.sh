@@ -9,7 +9,7 @@ softdevice_version=7.2.0
 softdevice_id=0x0100
 
 application_version=1
-bootloader_version=2
+bootloader_version=3
 
 bootloader_start=0xF3000
 
