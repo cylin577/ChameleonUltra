@@ -15,12 +15,31 @@ vm.runInContext(src + "\n;globalThis.__mt = {" +
   "multitapBuildPayload};", ctx);
 const M = ctx.__mt;
 
+/* The CTAP2 CBOR codec lives in its own file so the terminal and the page
+ * share it; it needs TextEncoder/TextDecoder, which a bare VM context lacks. */
+const cborSrc = fs.readFileSync(path.join(__dirname, "..", "fido2_cbor.js"), "utf8");
+const cborCtx = { TextEncoder, TextDecoder, Uint8Array, Array, Object, Number, Math, JSON };
+vm.createContext(cborCtx);
+vm.runInContext(cborSrc + "\n;globalThis.__cbor = {" +
+  "fido2CborEncode, fido2CborDecode, fido2CborFormat, " +
+  "fido2CborMakeCredentialParams, fido2CborGetAssertionParams};", cborCtx);
+const C = cborCtx.__cbor;
+
 let pass = 0, fail = 0;
 function check(cond, msg) {
   if (cond) { pass++; } else { fail++; console.error("FAIL:", msg); }
 }
 function throws(fn) {
   try { fn(); return false; } catch (e) { return true; }
+}
+function sequenceIndex(haystack, needle) {
+  outer: for (let i = 0; i + needle.length <= haystack.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
 }
 
 check(M.MULTITAP_BIND_TAP_MIN === 2 && M.MULTITAP_BIND_TAP_MAX === 5, "bind tap range");
@@ -104,6 +123,80 @@ check(p4.thresholdMs === 50, "build clamps a corrupt device threshold");
 check(p4.a.join(",") === "4,0,0,0", "build keeps the slots with a corrupt device threshold");
 check(M.multitapPack(p4.a, p4.b, p4.thresholdMs).length === 10, "pack accepts the clamped threshold");
 check((() => { const cur = {a: [4,0,0,0], b: [0,0,0,0], thresholdMs: 250}; M.multitapBuildPayload(cur, ["a0"], SELECTED, false, 250); return cur.a.join(",") === "4,0,0,0"; })(), "build does not modify the device table");
+
+/* ---- CTAP2 CBOR codec (fido2_cbor.js) ---- */
+check(C.fido2CborEncode(0).join(",") === "0", "cbor encode 0");
+check(C.fido2CborEncode(23).join(",") === "23", "cbor encode 23");
+check(C.fido2CborEncode(24).join(",") === "24,24", "cbor encode 24");
+check(C.fido2CborEncode(256).join(",") === "25,1,0", "cbor encode 256");
+check(C.fido2CborEncode(-7).join(",") === "38", "cbor encode -7");
+check(C.fido2CborEncode(true).join(",") === "245", "cbor encode true");
+check(C.fido2CborEncode(false).join(",") === "244", "cbor encode false");
+check(C.fido2CborEncode(null).join(",") === "246", "cbor encode null");
+check(C.fido2CborEncode("none").join(",") === "100,110,111,110,101", "cbor encode text");
+check(C.fido2CborEncode(new Uint8Array([1, 2])).join(",") === "66,1,2", "cbor encode byte string");
+check(C.fido2CborEncode([1, 2]).join(",") === "130,1,2", "cbor encode array");
+check(C.fido2CborEncode({1: 2}).join(",") === "161,1,2", "cbor encode map");
+
+check(C.fido2CborDecode(new Uint8Array([0])) === 0, "cbor decode 0");
+check(C.fido2CborDecode(new Uint8Array([0x26])) === -7, "cbor decode -7");
+check(C.fido2CborDecode(new Uint8Array([0x64, 110, 111, 110, 101])) === "none", "cbor decode text");
+check(C.fido2CborDecode(new Uint8Array([0x42, 1, 2])) instanceof Uint8Array, "cbor decode byte string");
+check(C.fido2CborDecode(new Uint8Array([0xF4])) === false, "cbor decode false");
+check(C.fido2CborDecode(new Uint8Array([0xF5])) === true, "cbor decode true");
+check(C.fido2CborDecode(new Uint8Array([0xF6])) === null, "cbor decode null");
+
+/* A CTAP2 request round-trips: clientDataHash + rp + pubKeyCredParams. */
+const ctapReq = {1: new Uint8Array(32).fill(7), 2: {id: "example.com"}, 3: [{alg: -7, type: "public-key"}]};
+const ctapBack = C.fido2CborDecode(C.fido2CborEncode(ctapReq));
+check(ctapBack[1] instanceof Uint8Array && ctapBack[1].length === 32, "cbor round-trip byte string");
+check(ctapBack[2].id === "example.com", "cbor round-trip text map");
+check(ctapBack[3][0].alg === -7, "cbor round-trip negative int");
+check(ctapBack[3][0].type === "public-key", "cbor round-trip nested map");
+
+/* The CTAP2 builders must use the protocol's numeric parameter keys. */
+const makeParams = C.fido2CborMakeCredentialParams(
+  "example.com", new Uint8Array(32).fill(7));
+const makeBack = C.fido2CborDecode(C.fido2CborEncode(makeParams));
+check(makeBack[4] && makeBack[4][0].alg === -7,
+  "make-credential pubKeyCredParams uses key 4");
+check(makeBack[7] && makeBack[7].rk === false,
+  "make-credential options uses key 7");
+check(makeBack[5] === undefined, "make-credential does not use key 5");
+
+const assertionParams = C.fido2CborGetAssertionParams(
+  "example.com", new Uint8Array(32).fill(7), new Uint8Array(64).fill(9));
+check(Object.keys(assertionParams[3][0]).join(",") === "id,type",
+  "get-assertion descriptor key order");
+const assertionEncoded = C.fido2CborEncode(assertionParams);
+check(sequenceIndex(assertionEncoded, C.fido2CborEncode("id")) <
+  sequenceIndex(assertionEncoded, C.fido2CborEncode("type")),
+  "get-assertion wire descriptor order");
+
+/* What the firmware's authenticatorGetInfo answers, built with explicit
+ * map/array heads so the decoder sees the exact byte layout. */
+const mapHead = n => [0xa0 | n];
+const arrHead = n => [0x80 | n];
+const infoRaw = C.fido2CborDecode(new Uint8Array([].concat(
+  mapHead(4),
+  [0x01], arrHead(2), C.fido2CborEncode("FIDO_2_0"), C.fido2CborEncode("U2F_V2"),
+  [0x03], C.fido2CborEncode(new Uint8Array(16)),
+  [0x04], mapHead(4), C.fido2CborEncode("rk"), C.fido2CborEncode(false),
+  C.fido2CborEncode("up"), C.fido2CborEncode(true),
+  C.fido2CborEncode("clientPin"), C.fido2CborEncode(false),
+  C.fido2CborEncode("makeCredUvNotRqd"), C.fido2CborEncode(true),
+  [0x09], arrHead(3), C.fido2CborEncode("usb"), C.fido2CborEncode("nfc"), C.fido2CborEncode("ble"))));
+check(infoRaw[1][0] === "FIDO_2_0" && infoRaw[1][1] === "U2F_V2", "cbor get-info versions");
+check(infoRaw[3] instanceof Uint8Array && infoRaw[3].length === 16, "cbor get-info aaguid");
+check(infoRaw[4].rk === false && infoRaw[4].up === true, "cbor get-info options");
+check(infoRaw[9].join(",") === "usb,nfc,ble", "cbor get-info transports");
+
+check(throws(() => C.fido2CborDecode(new Uint8Array([]))), "cbor decode empty throws");
+check(throws(() => C.fido2CborDecode(new Uint8Array([0x42, 1]))), "cbor decode truncated throws");
+check(throws(() => C.fido2CborDecode(new Uint8Array([0xc0, 1]))), "cbor decode tag throws");
+check(throws(() => C.fido2CborEncode(1.5)), "cbor encode float throws");
+check(C.fido2CborFormat(new Uint8Array([0xde, 0xad]), 0) === "h'dead'", "cbor format byte string");
+check(C.fido2CborFormat({1: 2}, 0).indexOf("1: 2") >= 0, "cbor format map");
 
 console.log(pass + " checks, " + fail + " failed");
 process.exit(fail ? 1 : 0);

@@ -44,6 +44,7 @@ const CU = {
   // 1063/1064 were GET/SET_MULTI_TAP_CONFIG (the v8 "short press after N
   // taps" modifier). Replaced by the per-tap-count bindings below.
   GET_MULTI_TAP_BINDINGS:1065, SET_MULTI_TAP_BINDINGS:1066,
+  FIDO2_CTAP:1067,
 
   HF14A_SCAN:2000, MF1_DETECT_SUPPORT:2001, MF1_DETECT_PRNG:2002,
   MF1_AUTH_ONE_KEY_BLOCK:2007, MF1_READ_ONE_BLOCK:2008, MF1_WRITE_ONE_BLOCK:2009,
@@ -2318,6 +2319,7 @@ wire("e_savejson", eCard, async () => {
    "FDS_LIST": "-> N * {u16 file_id, u16 key, u16 len_bytes} (big-endian)",
    "FDS_READ": "u16 file_id, u16 key, u16 offset, u16 len -> record slice (len 0 = max)",
    "U2F_SET_ATTESTATION": "u8[32] att_priv, u8[] att_cert_der -> provision U2F attestation",
+   "FIDO2_CTAP": "u8 ctap_cmd + u8[] cbor -> u8 ctap_status + u8[] response (u2f mode armed)",
    "HF14A_SCAN_KEEP": "scan+RATS, keep field alive for APDU exchange",
    "HF14A_AUTH_TRACE": "full anticoll + Crypto1 auth, every frame returned for inspection",
    "HF14A_PASSIVE_RECV": "listen-only: capture one card->reader frame under an external field (uplink sniff gate test)",

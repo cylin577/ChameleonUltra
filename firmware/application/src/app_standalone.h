@@ -121,6 +121,8 @@ typedef struct standalone_mode_iface {
     bool                writes_tag;    /* requires HOST_OPTED_IN */
     bool                writes_slot;   /* requires HOST_OPTED_IN */
     bool                wants_tick;    /* if true, on_tick is called periodically */
+    /* The host trigger must not substitute for a physical button gesture. */
+    bool                requires_physical_user_presence;
 
     /* on_tick period in milliseconds. 0 = framework default (~10 Hz).
      * Latency-sensitive modes (relay: NFCT window ~77ms) set a small value. */

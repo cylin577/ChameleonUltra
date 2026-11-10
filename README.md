@@ -49,6 +49,10 @@ onto a USB drive." That is the whole point: shorter build-flash-test loops.
   [`firmware/tools/RECOVERY_BUILD.md`](firmware/tools/RECOVERY_BUILD.md).
 - **Native cross-platform BLE.** The desktop CLI connects over BLE (Nordic UART)
   as well as USB.
+- **FIDO2 authenticator.** The `u2f` standalone mode is a real CTAP2
+  authenticator over NFC, USB (CTAPHID) and BLE (FIDO GATT `0xFFFD`), with the
+  U2F applet kept as the CTAP1 fallback on NFC. See
+  [`docs/fido2.md`](docs/fido2.md).
 
 The RFID/NFC research feature set and the client protocol are carried forward,
 so existing tooling such as ChameleonUltraGUI continues to work.
@@ -82,6 +86,10 @@ to `firmware/standalone_modes.mk` (gitignored) and edit it for a setting
 that persists across builds, or override just one build with an env var
 prefix, e.g. `STANDALONE_AUTOCLONE=1 ./build.sh`. See
 [`CONTRIBUTING STANDALONE.md`](firmware/application/src/standalone_modes/CONTRIBUTING%20STANDALONE.md#3-add-to-the-makefile).
+
+The FIDO2 authenticator is one of them: `STANDALONE_U2F=1` builds the
+`u2f` mode, which answers CTAP2 over NFC, USB and BLE. Build notes and the
+feature matrix are in [`docs/fido2.md`](docs/fido2.md).
 
 ## Revert to stock
 

@@ -719,3 +719,6 @@ firmware/application/src/tests/test_app_button_edge
 firmware/application/src/tests/test_app_button_tap_path
 firmware/application/src/rfid/nfctag/lf/tests/test_fdxb_modulator
 firmware/application/src/standalone_modes/tests/test_nfc_canary_core
+firmware/application/src/standalone_modes/tests/test_fido2_core
+firmware/application/src/standalone_modes/tests/test_fido2_hid
+firmware/application/src/standalone_modes/tests/test_fido2_ble

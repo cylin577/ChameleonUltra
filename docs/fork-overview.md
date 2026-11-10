@@ -36,9 +36,27 @@ flash and are pulled later.
 * Core: `app_standalone.[ch]`, `app_cmd_standalone.c`, `standalone_led.[ch]`.
 * Modes (`standalone_modes/`): `mode_template.c`, `mode_authtrace.c`,
   `mode_emultrace.c`, `mode_hf14a_tap_sniff.c`, `mode_relay.c`,
-  `mode_slot_cycle.c`, with `CONTRIBUTING STANDALONE.md` and `TESTING.md`.
+  `mode_slot_cycle.c`, `mode_u2f.c`, with `CONTRIBUTING STANDALONE.md` and
+  `TESTING.md`.
 * Client `standalone` command group: status, set-mode, trigger, disarm,
   get-result, ls, clear-result, config.
+
+## FIDO2 authenticator
+
+The `u2f` standalone mode runs a FIDO2 / CTAP2 authenticator over NFC
+(NFCCTAP_MSG), USB (CTAPHID, usage page `0xF1D0`) and BLE (FIDO GATT
+`0xFFFD`), with the U2F applet kept as the CTAP1 fallback on NFC.
+
+* Shared core: `standalone_modes/fido2_core.[ch]` (CBOR, SHA-256/HMAC, ECDSA,
+  stateless key wrapping, one request slot).
+* Transports: `fido2_hid.[ch]` (CTAPHID), `fido2_ble.[ch]` (GATT 0xFFFD),
+  NFC glue in `mode_u2f.c`.
+* Host link: `DATA_CMD_FIDO2_CTAP` (1067) → `chameleon_cmd.fido2_ctap()`,
+  client `hw u2f get-info` / `hw u2f ctap`, CBOR codecs
+  `script/fido2_cbor.py` and `Web/fido2_cbor.js`.
+* No client PIN, no resident keys, `none` attestation, no user verification.
+
+See [fido2.md](fido2.md).
 
 ## HF-14A sniffing
 

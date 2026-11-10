@@ -341,12 +341,54 @@ static data_frame_tx_t *cmd_processor_fds_read(uint16_t cmd, uint16_t status, ui
 
 #if CONFIG_STANDALONE_U2F
 #include "standalone_modes/mode_u2f.h"
+#include "standalone_modes/fido2_core.h"
 static data_frame_tx_t *cmd_processor_u2f_set_attestation(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
     /* payload: u8[32] attestation private key | u8[] attestation cert (DER) */
     if (length < 32 + 2) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
     uint16_t cert_len = length - 32;
     bool ok = u2f_set_attestation(data, data + 32, cert_len);
     return data_frame_make(cmd, ok ? STATUS_SUCCESS : STATUS_FLASH_WRITE_FAIL, 0, NULL);
+}
+
+/* CTAP2 over the host link (CLI / web console). Payload: u8 ctap_cmd | u8[]
+ * cbor. Answer: u8 ctap_status | u8[] response. The core runs the command
+ * inline — the handler is called from the main loop, not from an ISR.
+ * MakeCredential/GetAssertion need a physical ACTION-button grant made before
+ * the command; this synchronous host protocol cannot deliver CTAP KEEPALIVE. */
+static uint8_t m_fido2_req[FIDO2_MAX_REQUEST];
+static uint8_t m_fido2_resp[FIDO2_MAX_RESPONSE];
+
+static data_frame_tx_t *cmd_processor_fido2_ctap(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    (void)status;
+    if (length < 1 || length > FIDO2_MAX_REQUEST) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+    /* The mode has to be armed: otherwise there is no authenticator to talk to. */
+    if (fido2_core_transport_mask() == 0) {
+        uint8_t ctap_status = 0x01;             /* invalid command */
+        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
+    }
+    memcpy(m_fido2_req, data, length);
+    if (!fido2_submit(FIDO2_OWNER_HOST, m_fido2_req, length)) {
+        uint8_t ctap_status = 0x01;             /* busy / not accepted */
+        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
+    }
+    fido2_tick();                              /* run the command now */
+    if (fido2_waiting_for_presence(FIDO2_OWNER_HOST)) {
+        /* Do not leave the core slot waiting: the host request/response path
+         * has no KEEPALIVE channel. Ask for the button grant first, then retry. */
+        fido2_cancel(FIDO2_OWNER_HOST);
+        (void)fido2_take_response(FIDO2_OWNER_HOST, m_fido2_resp,
+                                  sizeof(m_fido2_resp), NULL);
+        uint8_t ctap_status = FIDO2_ERR_OPERATION_DENIED;
+        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
+    }
+    size_t rlen = 0;
+    if (!fido2_take_response(FIDO2_OWNER_HOST, m_fido2_resp, sizeof(m_fido2_resp), &rlen)) {
+        uint8_t ctap_status = 0x01;
+        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
+    }
+    return data_frame_make(cmd, STATUS_SUCCESS, (uint16_t)rlen, m_fido2_resp);
 }
 #endif
 
@@ -4884,6 +4926,7 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_FDS_READ,                     NULL,                        cmd_processor_fds_read,                      NULL                   },
 #if CONFIG_STANDALONE_U2F
     {    DATA_CMD_U2F_SET_ATTESTATION,          NULL,                        cmd_processor_u2f_set_attestation,           NULL                   },
+    {    DATA_CMD_FIDO2_CTAP,                    NULL,                        cmd_processor_fido2_ctap,                    NULL                   },
 #endif
     {    DATA_CMD_SET_BLE_NAME,                 NULL,                        cmd_processor_set_ble_name,                  NULL                   },
 

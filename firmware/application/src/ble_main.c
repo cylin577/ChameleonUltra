@@ -26,6 +26,9 @@
 #if CONFIG_STANDALONE_GDB_GATEWAY
 #include "gdb_rsp.h"
 #endif
+#if CONFIG_STANDALONE_U2F
+#include "standalone_modes/fido2_ble.h"
+#endif
 
 #define NRF_LOG_MODULE_NAME ble_main
 #include "nrf_log.h"
@@ -102,6 +105,9 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 {
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE},
     {BLE_UUID_BATTERY_SERVICE, BLE_UUID_TYPE_BLE},
+#if CONFIG_STANDALONE_U2F
+    {0xFFFD, BLE_UUID_TYPE_BLE},                    /**< FIDO GATT service (BLE FIDO2) */
+#endif
 };
 volatile bool g_is_ble_connected = false;
 volatile bool g_is_low_battery_shutdown = false;
@@ -351,6 +357,12 @@ static void services_init(void) {
 
     err_code = ble_bas_init(&m_bas, &bas_init_obj);
     APP_ERROR_CHECK(err_code);
+
+#if CONFIG_STANDALONE_U2F
+    // FIDO GATT service (BLE FIDO2 transport for the u2f standalone mode)
+    err_code = ble_fido_svc_init();
+    APP_ERROR_CHECK(err_code);
+#endif
 }
 
 /**@brief Function for handling an event from the Connection Parameters Module.

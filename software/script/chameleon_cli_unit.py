@@ -23,6 +23,7 @@ import cli_hf_st25ta  # noqa: F401,E402  (hf st25ta ...)
 import cli_hf_mfplus  # noqa: F401,E402  (hf mfplus ...)
 import cli_hw_log  # noqa: F401,E402  (hw log ...)
 import cli_hw_bl  # noqa: F401,E402  (hw bl ...)
+import cli_hw_download  # noqa: F401,E402  (hw download ...)
 import cli_hw_fds  # noqa: F401,E402  (hw fds ...)
 import cli_hw_u2f  # noqa: F401,E402  (hw u2f ...)
 import cli_hw_logic  # noqa: F401,E402  (hw logic ...)
@@ -5624,6 +5625,7 @@ class StandaloneSetMode(DeviceRequiredUnit):
         standalone set-mode authtrace
         standalone set-mode slot-cycle
         standalone set-mode autoclone --opt-in
+        standalone set-mode u2f             (FIDO2 authenticator)
         standalone set-mode disabled       (returns to normal button config)
     """
 
@@ -5632,7 +5634,8 @@ class StandaloneSetMode(DeviceRequiredUnit):
         parser.description = 'Set standalone mode'
         parser.add_argument('mode', help='mode name (authtrace, emul-trace, relay, slot-cycle, '
                                          'autoclone, read-replay, dict-check, '
-                                         'hf14a-tap-sniff, disabled)')
+                                         'hf14a-tap-sniff, nfc-canary, '
+                                         'gdb-gateway, u2f, disabled)')
         parser.add_argument('--opt-in', action='store_true',
                             help='set HOST_OPTED_IN flag (required for '
                                  'autoclone and read-replay)')

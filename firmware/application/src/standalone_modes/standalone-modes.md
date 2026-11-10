@@ -45,7 +45,8 @@ with `hw settings btnpress`; short and long press of A and B are set separately:
 
 The standalone functions are not bound by default. The same actions are
 available from the host: `standalone trigger` (arms if disarmed, then runs the
-action), `standalone disarm`, `standalone clear-result`.
+action unless the mode requires a physical presence gesture), `standalone
+disarm`, `standalone clear-result`.
 
 Example: keep the slot buttons for slot cycling and put the standalone actions
 on the long presses:
@@ -483,50 +484,89 @@ stepping; for those, use real gdb via USB or `gdb_ble_bridge.py` above.
   automatically on the next gdb session; gdb itself still needs reattaching.
 
 ---
-## `u2f` ,  FIDO U2F (CTAP1) authenticator over NFC  *(Lite + Ultra)*
+## `u2f` ,  FIDO2 / CTAP2 authenticator over NFC, USB and BLE  *(Lite + Ultra)*
 
-Emulates an ISO-14443-4 token answering the FIDO U2F applet (AID
-`A0000006472F0001`). A reader does `SELECT` → `REGISTER` / `AUTHENTICATE`; the
-CU generates a credential and signs assertions. Reuses the tested T=CL engine
-(`nfc_14a_4`), so the NFC tap is the whole interaction ,  no buttons, no USB.
+One authenticator, three transports, one shared core:
+
+| Transport | Protocol |
+|-----------|----------|
+| NFC | ISO-14443-4 T=CL. `NFCCTAP_MSG` (INS `0x10`) carries a CTAP2 command; the U2F applet (AID `A0000006472F0001`, INS `0x01`/`0x02`) stays as the CTAP1 fallback. |
+| USB | CTAPHID: 64-byte HID reports on usage page `0xF1D0`, USB interface 2. |
+| BLE | FIDO GATT service `0xFFFD` (Control Point `FFF1`, Status `FFF2`, Control Point Length `FFF3`, Service Revision Bitfield `FFF4`, Service Revision `2A28`). |
+
+All three hand their bytes to the same transport-independent core
+(`fido2_core.c`), which owns the crypto (stateless key wrapping, ECDSA, CBOR)
+and a single request slot. The CTAP1 path shares the core's master key and
+sign counter, so a counter never repeats across the two protocol versions.
 
 **Stateless key wrapping ,  no per-credential storage.** A credential's private
 key is derived on the fly, not stored:
 ```
-priv = HMAC-SHA256(mk, 0x01 | appId | nonce)
-kh   = nonce | HMAC-SHA256(mk, 0x02 | appId | nonce)
+priv = HMAC-SHA256(mk, 0x01 | rpIdHash32 | nonce32)   (P-256 scalar)
+kh   = nonce32 | HMAC-SHA256(mk, 0x02 | rpIdHash32 | nonce32)
 ```
 Only a 32-byte master key and a 4-byte global counter live in FDS (file
 `0x1020`). The handle's MAC binds it to its origin, so a handle cannot be
 replayed on another site. Crypto is self-contained SHA-256/HMAC plus micro-ecc
-(uECC) for P-256; the NFC tap is the user-presence gesture (always asserted).
-Oversized `REGISTER` replies are returned with ISO-7816 `61xx`/GET-RESPONSE
-chaining. Keys sit in internal flash, **not a secure element** ,  research use.
+(uECC) for P-256. Keys sit in internal flash, **not a secure element** ,  research
+use.
 
-**Platform support:** CTAP1/U2F only. Works where the host still does the U2F
-NFC path ,  **Android** (Chrome) and **PC/SC** readers. **iOS Safari does not**:
-its NFC WebAuthn requires CTAP2/FIDO2 and silently ignores a U2F-only applet.
-For iPhone you need the CTAP2 layer (not built here).
+**CTAP2 user presence is mandatory.** `MakeCredential` and `GetAssertion` wait
+for one physical short press of the button bound to `STANDALONE_ACTION`. USB
+and BLE send `KEEPALIVE(UP_NEEDED)` while waiting; NFC holds the request. The
+grant expires after 5 seconds and authorizes one operation. `GetInfo` is exempt.
+The host `standalone trigger` command can arm the mode but cannot impersonate
+that physical gesture.
+
+**Supported CTAP2:** `authenticatorGetInfo`, `authenticatorMakeCredential`,
+`authenticatorGetAssertion`, with `none` attestation, no client PIN, no
+resident keys, no user verification. That is the UV-discouraged /
+second-factor profile: WebAuthn sites that ask for a passkey (UV required) will
+refuse this authenticator. `authenticatorGetNextAssertion` is not implemented.
+
+**Platform support:** CTAP2 over NFC works where the host speaks the NFCCTAP
+path (Android/Chrome, desktop browsers over NFC). USB and BLE speak plain
+CTAP2, so any WebAuthn client that can use a USB security key can use this one.
+The CTAP1/U2F applet is still there for the older NFC WebAuthn path.
 
 **Build:** off by default. Set `STANDALONE_U2F=1` and vendor micro-ecc into
 `src/crypto/micro-ecc/` (whole repo ,  `uECC.c` pulls in its `.h`/`.inc`).
-No source edits are needed for attestation ,  provision it at runtime:
+Attestation material is provisioned at runtime, no source edits needed:
 ```
 firmware/tools/gen_u2f_attestation.sh          # make a P-256 key + cert
 hw u2f set-attestation -k att.key -c att.crt   # stored in FDS, survives reboot
 ```
-Until a key/cert are provisioned, `REGISTER` output is not a usable credential.
+CTAP2 uses `none` attestation, so a key/cert is only needed for the CTAP1
+`REGISTER` reply.
 
 ```
 standalone set-mode u2f        # no --opt-in needed; writes no tag/slot
-#  press the TOGGLE button to ARM (blue LED); present the CU to an NFC reader
-#  Android: Chrome -> webauthn.io -> register a security key -> tap
-#  PC/SC:   python3 firmware/tools/u2f_nfc_test.py   (full register+auth verify)
+#  press the TOGGLE button to ARM (blue LED)
+#  NFC:  present the CU to an NFC reader (Android: Chrome -> webauthn.io)
+#  USB:  plug it in -- it enumerates as a FIDO HID device
+#  BLE:  pair and look for the 0xFFFD service
 ```
 
-**Config:** none. **Buttons:** TOGGLE = arm/disarm. **Produces no results.**
+**Talking to it from the host:** the CLI and the web console can drive the same
+core over the device link (`DATA_CMD_FIDO2_CTAP`):
+```
+hw u2f get-info
+hw u2f ctap --cmd make-credential --rp-id example.com --client-data-hash <64 hex chars>
+```
+The web console's terminal has the same `hw u2f get-info` / `hw u2f ctap`
+commands. See [`docs/fido2.md`](../../../../docs/fido2.md) for the full picture.
+For a host-link MakeCredential/GetAssertion, physically press ACTION first and
+send the command within 5 seconds; otherwise the firmware returns CTAP status
+`0x27` (operation denied).
+
+**Config:** none. **Buttons:** TOGGLE = arm/disarm; ACTION = physical CTAP2
+user-presence grant. **Produces no results.**
 Works on Lite and Ultra (NFCT only, no reader hardware). First boot generates
 the master key; it persists, so credentials survive reboots.
+
+This checkout was verified with host tests and compile-only firmware builds.
+USB CTAPHID, BLE FIDO GATT and NFC CTAP2 interoperability, physical-button
+timing and the NFC wait-for-UP timeout still require testing on real hardware.
 
 ---
 ## `--opt-in` and quiet flags

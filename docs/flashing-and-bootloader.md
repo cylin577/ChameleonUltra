@@ -117,7 +117,7 @@ bootloader (`VerificationFailed`). The application can replace the bootloader
 itself, without DFU:
 
 1. Flash a current application through the UF2 drive (works on any unit).
-2. `hw bl push bootloader.hex` (or a raw `.bin` linked for 0xF3000; UICR records in a hex are ignored).
+2. `hw bl push firmware/objects/bootloader.hex` (or a raw `.bin` linked for 0xF3000; UICR records in a hex are ignored).
 
 The app erases and fills the staging area (0xB0000-0xBF000) and checks the
 CRC32 and the vector table. It then writes 0xF3000 directly with the NVMC,
@@ -125,6 +125,20 @@ converts UICR (NRFFW/REGOUT0) and resets. The MBR is not involved, so this works
 on units whose bootloader was never MBR-registered. There is no journaling: a
 power loss during the write bricks the device (SWD-only recovery). The
 application is limited to 0x27000-0xB0000 (560 KB).
+
+### Full flash: bootloader + app (no SD step)
+
+```bash
+hw download ultra
+hw connect
+hw bl push -y /tmp/cu/bootloader.bin
+hw flash /tmp/cu/application.bin
+# Local build instead: firmware/objects/bootloader.hex and firmware/objects/application.hex (both accept .hex directly).
+```
+
+`hw download` fetches the latest published release by default; `--tag nightly` pulls the prerelease build instead.
+
+Before skipping the SoftDevice, confirm the package SD matches the device's SoftDevice (this release uses S140 7.2.0, FWID `0x0100`). If the signed full ZIP is refused or DFU reports `0x0C`, use the two raw-image stages above instead. `hw bl push` has no power-loss journaling: keep power connected until the device resets.
 
 ## Forcing bootloader entry
 
@@ -136,7 +150,7 @@ The bootloader can be reached whatever state the application is in:
   the device resets, the bootloader sees the watchdog reset and enters UF2 +
   CDC DFU mode as if BUTTON_2 were held. It stays for the 30 s DFU inactivity
   timeout, then starts the app again, so a hanging app cycles between a short
-  flashable window and the hang. `hw flash application.hex --no-enter` works in
+  flashable window and the hang. `hw flash firmware/objects/application.hex --no-enter` works in
   that window. A real watchdog reset also plays the boot bark on the slot LEDs
   (red scan, three barks, then the bootloader version in binary). The bark
   means the app hung, so it never plays for a button press.

@@ -597,6 +597,9 @@ standalone_rc_t app_standalone_trigger(void) {
 
     const standalone_mode_iface_t *m = active_mode();
     if (m == NULL || m->on_button == NULL) return STANDALONE_RC_INVALID_STATE;
+    /* A host command may arm the mode, but it cannot impersonate a physical
+     * user-presence gesture. */
+    if (m->requires_physical_user_presence) return STANDALONE_RC_OK;
     return m->on_button(STANDALONE_BTN_BOTH_SHORT);
 }
 

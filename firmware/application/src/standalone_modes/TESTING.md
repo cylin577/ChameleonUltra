@@ -228,6 +228,93 @@ way to change timing is to set the config blob via raw bytes (no fancy
 config flags in the CLI yet). If you need that, file a bug.
 
 
+## U2F / FIDO2 mode workflow
+
+What it does: the device becomes a FIDO2 authenticator. CTAP2 is served over
+NFC (NFCCTAP_MSG), USB (CTAPHID) and BLE (FIDO GATT 0xFFFD); the old U2F
+applet stays as the CTAP1 fallback on NFC. There is nothing to "capture" and
+no result buffer — the mode is a live service.
+
+**Bench test:**
+
+```
+chameleon --> standalone set-mode u2f
+# Press the TOGGLE button -> the mode color sweep -> ARMED
+
+# Then, over the same link:
+chameleon --> hw u2f get-info
+```
+
+Expected shape:
+
+```
+ - CTAP status: 0x00 (ok)
+ - Response:
+     1: ['FIDO_2_0', 'U2F_V2']
+     3: h'00000000000000000000000000000000'
+     4: {'rk': False, 'up': True, 'clientPin': False, 'makeCredUvNotRqd': True}
+     9: ['usb', 'nfc', 'ble']
+```
+
+If the status is `0x01` (invalid command), the mode is not armed — arm it and
+try again. `GetInfo` does not require user presence.
+
+To exercise CTAP2 user presence:
+
+1. Send `MakeCredential` or `GetAssertion` over USB, BLE or NFC.
+2. USB/BLE clients should report `KEEPALIVE(UP_NEEDED)`; NFC keeps the reader
+   waiting.
+3. Physically short-press the button bound to `STANDALONE_ACTION`.
+4. Confirm the operation completes. The grant expires after 5 seconds and is
+   consumed by one operation.
+
+Bind that button first if needed:
+
+```
+hw settings btnpress -b -s -f STANDALONE_ACTION
+hw settings store
+```
+
+Over the serial/web host link, press ACTION physically first and send the CTAP
+command within 5 seconds. `hw u2f ctap --cmd make-credential --rp-id
+example.com --client-data-hash <64 hex chars>` then exercises the credential
+path; a successful answer carries the credential id, which `hw u2f ctap --cmd
+get-assertion --rp-id ... --cred-id <128 hex chars>` can use. Without the
+prior physical grant the host path returns CTAP status `0x27` (operation
+denied). `standalone trigger` may arm the mode, but it cannot grant user
+presence.
+
+The transports can be checked independently:
+
+- **USB:** plug the device in while armed; it enumerates as a FIDO HID
+  device (usage page `0xF1D0`). `hw u2f get-info` over the serial link proves
+  the core is alive, but the USB transport only answers when a CTAPHID client
+  talks to it.
+- **BLE:** pair and look for the `0xFFFD` service.
+- **NFC:** present the device to an NFC reader. CTAP2 needs a host that speaks
+  NFCCTAP (Android/Chrome, desktop browsers over NFC); the CTAP1 applet works
+  with the older U2F NFC path.
+
+Not supported, by design: client PIN, resident keys, user verification,
+`authenticatorReset`, `authenticatorGetNextAssertion`, packed/basic
+attestation, and U2F-over-CTAPHID. See
+[`docs/fido2.md`](../../../../docs/fido2.md) for the full matrix.
+
+**Host test suites** (no hardware needed):
+
+```
+make -C firmware/application/src/standalone_modes/tests test   # core + HID + BLE + nfc_canary
+(cd software/script && uv run --project .. python -m unittest \
+    tests.test_fido2_cbor tests.test_fido2_requests)
+node software/Web/tests/test_multitap_web.js                  # includes the JS CBOR codec
+```
+
+These checks are hardware-free. This checkout has no ChameleonUltra available
+for an end-to-end run, so USB CTAPHID, BLE FIDO GATT and NFC CTAP2
+interoperability, physical-button timing and the NFC wait-for-UP timeout are
+still unverified on real hardware.
+
+
 ## CLI reference
 
 All commands live under the `standalone` subgroup:
@@ -237,14 +324,16 @@ standalone status                     Show current state, mode, flags
 standalone set-mode <name> [--opt-in] Pick the active mode
 standalone config <mode> [knobs...]   Read/write mode-specific config
 standalone trigger                    Manually fire the active mode's primary action
+                                       (not a physical-UP gesture)
 standalone get-result [--dump|--json|--raw|-f FILE]
                                       Read the active mode's result buffer
 standalone clear-result               Discard captured results
 ```
 
 **Mode names:** `disabled`, `autoclone`, `read_replay`, `authtrace`,
-`slot_cycle`, `dict_check`. (Only `authtrace` and `slot_cycle` are
-implemented in the current build; the others are placeholders.)
+`slot_cycle`, `dict_check`, `emul_trace`, `relay`, `hf14a_tap_sniff`,
+`nfc_canary`, `gdb_gateway`, `u2f`. (Only the modes compiled into your
+firmware are available — `standalone ls` shows what this build has.)
 
 **`--opt-in`** is required for any future mode that writes to tag memory
 or modifies emulation slots. Not needed for AuthTrace or Slot Cycle.

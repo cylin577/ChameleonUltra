@@ -277,6 +277,12 @@ SRC_FILES += $(PROJ_DIR)/utils/gdb_rsp.c
 endif
 ifeq ($(strip $(STANDALONE_U2F)),1)
 SRC_FILES   += $(PROJ_DIR)/standalone_modes/mode_u2f.c
+ SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_core.c
+ SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_hid.c
+ SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_ble.c
+# USB CTAPHID class (FIDO HID interface, USB interface 2).
+ SRC_FILES   += $(SDK_ROOT)/components/libraries/usbd/class/hid/app_usbd_hid.c
+ SRC_FILES   += $(SDK_ROOT)/components/libraries/usbd/class/hid/generic/app_usbd_hid_generic.c
 # Vendored micro-ecc (kmackay/micro-ecc): copy the WHOLE repo into
 # crypto/micro-ecc/ — uECC.c #includes uECC.h, uECC_vli.h, types.h and the
 # curve/asm .inc files, so all of them must be present (only uECC.c is compiled).

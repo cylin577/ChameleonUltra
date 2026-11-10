@@ -10,6 +10,11 @@
 #include "app_usbd_core.h"
 #include "app_usbd_serial_num.h"
 #include "app_usbd_string_desc.h"
+#if CONFIG_STANDALONE_U2F
+#include "app_usbd_hid.h"
+#include "app_usbd_hid_generic.h"
+#include "standalone_modes/fido2_hid.h"
+#endif
 
 #define NRF_LOG_MODULE_NAME usb_cdc
 #include "nrf_log.h"
@@ -38,6 +43,67 @@ APP_USBD_CDC_ACM_GLOBAL_DEF(m_app_cdc_acm,
                             APP_USBD_CDC_COMM_PROTOCOL_AT_V250);
 
 // USB DEFINES END
+
+#if CONFIG_STANDALONE_U2F
+// FIDO2 CTAPHID interface: usage page 0xF1D0, one 64-byte IN report and one
+// 64-byte OUT report, no report id. The CDC keeps interfaces 0/1, so the HID
+// gets interface 2 with its own endpoint pair.
+#define HID_FIDO_INTERFACE   2
+#define HID_FIDO_EPIN        NRF_DRV_USBD_EPIN3
+#define HID_FIDO_EPOUT       NRF_DRV_USBD_EPOUT3
+#define HID_FIDO_REPORT_SIZE 64
+#define HID_FIDO_IN_QUEUE    4
+
+APP_USBD_HID_GENERIC_SUBCLASS_REPORT_DESC(hid_fido_report_desc,
+    {0x06, 0xD0, 0xF1,
+     0x09, 0x01,
+     0xA1, 0x01,
+     0x09, 0x20, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x40, 0x81, 0x02,
+     0x09, 0x21, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x40, 0x91, 0x02,
+     0xC0});
+
+static void hid_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usbd_hid_user_event_t event);
+static const app_usbd_hid_subclass_desc_t *hid_fido_reports[] = {&hid_fido_report_desc};
+
+APP_USBD_HID_GENERIC_GLOBAL_DEF(m_app_hid_generic,
+                                HID_FIDO_INTERFACE,
+                                hid_user_ev_handler,
+                                (HID_FIDO_EPIN, HID_FIDO_EPOUT),
+                                hid_fido_reports,
+                                HID_FIDO_IN_QUEUE,
+                                HID_FIDO_REPORT_SIZE - 1,  /* OUT buffer = maxsize + 1 */
+                                0,                         /* no feature report */
+                                APP_USBD_HID_SUBCLASS_NONE,
+                                APP_USBD_HID_PROTO_GENERIC);
+
+/* The GLOBAL_DEF macro leaves the IN report buffer uninitialised — point it
+ * at a valid 64-byte buffer before the class is used. */
+static uint8_t m_hid_in_buf[HID_FIDO_REPORT_SIZE];
+
+static bool hid_fido_send(const uint8_t *pkt, size_t len) {
+    ret_code_t err = app_usbd_hid_generic_in_report_set(&m_app_hid_generic, pkt, len);
+    return err == NRF_SUCCESS;
+}
+
+static void hid_user_ev_handler(app_usbd_class_inst_t const *p_inst, app_usbd_hid_user_event_t event) {
+    (void)p_inst;
+    switch (event) {
+        case APP_USBD_HID_USER_EVT_OUT_REPORT_READY: {
+            size_t size = 0;
+            const void *pkt = app_usbd_hid_generic_out_report_get(&m_app_hid_generic, &size);
+            if (pkt && size >= HID_FIDO_REPORT_SIZE) {
+                fido2_hid_on_out_report((const uint8_t *)pkt, HID_FIDO_REPORT_SIZE);
+            }
+            break;
+        }
+        case APP_USBD_HID_USER_EVT_IN_REPORT_DONE:
+            fido2_hid_on_in_report_done();
+            break;
+        default:
+            break;
+    }
+}
+#endif /* CONFIG_STANDALONE_U2F */
 
 // USB CODE START
 volatile bool g_usb_connected = false;
@@ -158,6 +224,16 @@ void usb_cdc_init(void) {
     app_usbd_class_inst_t const *class_cdc_acm = app_usbd_cdc_acm_class_inst_get(&m_app_cdc_acm);
     ret = app_usbd_class_append(class_cdc_acm);
     APP_ERROR_CHECK(ret);
+
+#if CONFIG_STANDALONE_U2F
+    /* FIDO2 CTAPHID class (USB interface 2). */
+    m_app_hid_generic_in.p_buff = m_hid_in_buf;
+    m_app_hid_generic_in.size = sizeof(m_hid_in_buf);
+    app_usbd_class_inst_t const *class_hid = app_usbd_hid_generic_class_inst_get(&m_app_hid_generic);
+    ret = app_usbd_class_append(class_hid);
+    APP_ERROR_CHECK(ret);
+    fido2_hid_set_sender(hid_fido_send);
+#endif
 }
 
 void usb_cdc_write(const void *p_buf, uint16_t length) {

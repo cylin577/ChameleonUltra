@@ -43,7 +43,26 @@ when you run them rather than silently doing nothing.
 - Commands are space-separated, nested groups first: `hw gdb regs`, `hf 14a
   scan`, `slot list`, etc.
 
-## 3. `hw gdb` — the GDB RSP gateway
+## 3. `hw u2f` — the FIDO2 authenticator
+
+With the `u2f` standalone mode armed, the terminal can talk to the device's
+FIDO2 / CTAP2 authenticator over the device link:
+
+```
+hw u2f get-info
+hw u2f ctap --cmd make-credential --rp-id example.com --client-data-hash <64 hex chars>
+```
+
+`get-info` prints the decoded `authenticatorGetInfo` answer (versions,
+AAGUID, options, transports). `hw u2f ctap` sends any of the three supported
+CTAP2 commands; `--raw <hex>` replaces the CBOR parameters for commands the
+terminal does not wrap. The same commands exist in the Python CLI.
+
+The authenticator itself is only reachable while the mode is armed — see
+[`docs/fido2.md`](../../docs/fido2.md) for what it does and does not support
+(no client PIN, no resident keys, `none` attestation).
+
+## 4. `hw gdb` — the GDB RSP gateway
 
 This talks to the firmware's `gdb_gateway` standalone mode over the GDB
 Remote Serial Protocol, straight from the browser — no SWD probe, no

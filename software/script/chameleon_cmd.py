@@ -2354,6 +2354,21 @@ class ChameleonCMD:
         return self.device.send_cmd_sync(Command.U2F_SET_ATTESTATION, priv + cert)
 
     @expect_response(Status.SUCCESS)
+    def fido2_ctap(self, ctap_cmd: bytes) -> bytes:
+        """Run a CTAP2 command on the device's FIDO2 authenticator.
+
+        `ctap_cmd` is the raw CTAP request: the command byte followed by the
+        CBOR parameters. Returns the raw CTAP response: status byte + payload.
+        """
+        if not ctap_cmd:
+            raise ValueError("CTAP request must not be empty")
+        if len(ctap_cmd) > 1024:
+            raise ValueError("CTAP request is too long (max 1024 bytes)")
+        resp = self.device.send_cmd_sync(Command.FIDO2_CTAP, ctap_cmd)
+        resp.parsed = resp.data
+        return resp
+
+    @expect_response(Status.SUCCESS)
     def get_device_capabilities(self):
         """
         Get list of commands that client understands

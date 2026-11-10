@@ -1,10 +1,30 @@
-"""cli_hw_u2f - provision the U2F standalone mode's attestation material (hw u2f ...)."""
+"""cli_hw_u2f - drive the FIDO2/U2F standalone mode (hw u2f ...)."""
 
 import argparse
 
+import fido2_cbor
 from cli_core import ArgumentParserNoExit, DeviceRequiredUnit, hw
 
-hw_u2f = hw.subgroup("u2f", "Provision the U2F standalone mode")
+hw_u2f = hw.subgroup("u2f", "FIDO2/U2F standalone mode")
+
+# CTAP2 command bytes (see CTAP2.1 §6).
+CTAP_MAKE_CREDENTIAL = 0x01
+CTAP_GET_ASSERTION = 0x02
+CTAP_GET_INFO = 0x04
+
+# CTAP2 status codes we bother naming.
+CTAP_STATUS = {
+    0x00: "ok",
+    0x01: "invalid command",
+    0x03: "invalid length",
+    0x12: "invalid CBOR",
+    0x14: "missing parameter",
+    0x26: "unsupported algorithm",
+    0x27: "operation denied",
+    0x2B: "unsupported option",
+    0x2D: "keepalive cancel",
+    0x2E: "no credentials",
+}
 
 
 def _load_priv_scalar(path: str) -> bytes:
@@ -60,3 +80,148 @@ class HWU2fSetAttestation(DeviceRequiredUnit):
             return
         self.cmd.u2f_set_attestation(priv, cert)
         print(f" - Provisioned: 32-byte key + {len(cert)}-byte cert. Re-arm u2f to apply.")
+
+
+# --------------------------------------------------------------------------
+# CTAP2 helpers
+# --------------------------------------------------------------------------
+def _hex(value: str, name: str, length: int = 0) -> bytes:
+    """Parse a hex string into bytes; `length` is the required byte count."""
+    try:
+        raw = bytes.fromhex(value.replace(" ", "").replace(":", ""))
+    except ValueError:
+        raise ValueError(f"{name} is not valid hex") from None
+    if length and len(raw) != length:
+        raise ValueError(f"{name} must be {length} bytes ({length * 2} hex chars), "
+                         f"got {len(raw)}")
+    return raw
+
+
+def _fmt(value, indent: int = 0) -> str:
+    """Render a decoded CBOR value for the terminal."""
+    pad = "    " * indent
+    if isinstance(value, bytes):
+        return f"h'{value.hex()}'"
+    if isinstance(value, dict):
+        lines = ["{"]
+        for key, item in value.items():
+            lines.append(f"{pad}    {key}: {_fmt(item, indent + 1)}")
+        lines.append(pad + "}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        lines = ["["]
+        for item in value:
+            lines.append(f"{pad}    {_fmt(item, indent + 1)}")
+        lines.append(pad + "]")
+        return "\n".join(lines)
+    return repr(value)
+
+
+def _run_ctap(unit, request: bytes) -> None:
+    """Send a CTAP request to the device and print the answer."""
+    try:
+        response = unit.cmd.fido2_ctap(request)
+    except Exception as e:
+        print(f" - CTAP request failed: {e}")
+        return
+    if not response:
+        print(" - Empty CTAP response.")
+        return
+    status = response[0]
+    print(f" - CTAP status: 0x{status:02x} ({CTAP_STATUS.get(status, 'unknown')})")
+    if len(response) == 1:
+        return
+    payload = response[1:]
+    try:
+        decoded = fido2_cbor.decode(payload)
+    except fido2_cbor.CBORError as e:
+        print(f" - Response payload ({len(payload)} bytes, not CBOR: {e})")
+        print(f"   h'{payload.hex()}'")
+        return
+    print(" - Response:")
+    print(_fmt(decoded, 1))
+
+
+def _build_request(args) -> bytes:
+    """Build the raw CTAP request (command byte + CBOR params) from the args."""
+    if args.raw:
+        params = _hex(args.raw, "--raw")
+    elif args.cmd == "make-credential":
+        if not args.rp_id:
+            raise ValueError("--rp-id is required for make-credential")
+        if not args.client_data_hash:
+            raise ValueError("--client-data-hash is required for make-credential")
+        params = fido2_cbor.encode({
+            1: _hex(args.client_data_hash, "--client-data-hash", 32),
+            2: {"id": args.rp_id, "name": args.rp_id},
+            3: {"id": bytes(32), "name": args.rp_id, "displayName": args.rp_id},
+            4: [{"alg": -7, "type": "public-key"}],     # ES256
+            7: {"rk": False},
+        })
+    elif args.cmd == "get-assertion":
+        if not args.rp_id:
+            raise ValueError("--rp-id is required for get-assertion")
+        if not args.client_data_hash:
+            raise ValueError("--client-data-hash is required for get-assertion")
+        if not args.cred_id:
+            raise ValueError("--cred-id is required for get-assertion")
+        params = fido2_cbor.encode({
+            1: args.rp_id,
+            2: _hex(args.client_data_hash, "--client-data-hash", 32),
+            3: [{"id": _hex(args.cred_id, "--cred-id", 64),
+                 "type": "public-key"}],
+        })
+    else:
+        params = b""
+    return bytes([{
+        "get-info": CTAP_GET_INFO,
+        "make-credential": CTAP_MAKE_CREDENTIAL,
+        "get-assertion": CTAP_GET_ASSERTION,
+    }[args.cmd]]) + params
+
+
+@hw_u2f.command("get-info")
+class HWU2fGetInfo(DeviceRequiredUnit):
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = ("Send CTAP2 authenticatorGetInfo to the device's "
+                              "FIDO2 authenticator (the u2f mode must be armed).")
+        return parser
+
+    def on_exec(self, args: argparse.Namespace):
+        _run_ctap(self, bytes([CTAP_GET_INFO]))
+
+
+@hw_u2f.command("ctap")
+class HWU2fCtap(DeviceRequiredUnit):
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = ("Send a CTAP2 command to the device's FIDO2 "
+                              "authenticator (the u2f mode must be armed).")
+        parser.add_argument("--cmd", default="get-info",
+                            choices=["get-info", "make-credential", "get-assertion"],
+                            help="CTAP2 command to send (default: get-info)")
+        parser.add_argument("--rp-id", help="relying party id (domain name)")
+        parser.add_argument("--client-data-hash",
+                            help="client data hash, 32 bytes hex")
+        parser.add_argument("--cred-id",
+                            help="credential id, 64 bytes hex (get-assertion)")
+        parser.add_argument("--raw",
+                            help="raw CBOR parameters, hex (replaces the built ones)")
+        parser.epilog = ("examples:\n"
+                         "  hw u2f ctap --cmd get-info\n"
+                         "  hw u2f ctap --cmd make-credential --rp-id example.com \\\n"
+                         "      --client-data-hash 000102030405060708090a0b0c0d0e0f"
+                         "101112131415161718191a1b1c1d1e1f\n"
+                         "  hw u2f ctap --cmd get-assertion --rp-id example.com \\\n"
+                         "      --client-data-hash <64 hex chars> --cred-id <128 hex chars>")
+        parser.formatter_class = argparse.RawDescriptionHelpFormatter
+        return parser
+
+    def on_exec(self, args: argparse.Namespace):
+        try:
+            request = _build_request(args)
+        except ValueError as e:
+            print(f" - {e}")
+            return
+        _run_ctap(self, request)

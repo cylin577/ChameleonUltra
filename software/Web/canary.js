@@ -369,7 +369,7 @@ async function fetchSaved(){
     } else if(devMode===MODE_GDB){
       $("saved").textContent=""; st.textContent="gdb_gateway keeps no log; it serves GDB over USB-CDC.";
     } else if(devMode===MODE_U2F){
-      $("saved").textContent=""; st.textContent="u2f keeps no log; it runs passively over NFC.";
+      $("saved").textContent=""; st.textContent="u2f keeps no log; the FIDO2 authenticator runs over NFC, USB and BLE.";
     } else if(devMode===MODE_READ_REPLAY){
       const recs=parseReadReplay(raw); renderReadReplay(recs);
       st.textContent = recs.length ? recs.length+" clone(s) stored." : "No clones stored.";
@@ -730,7 +730,7 @@ async function readState(){
   const f=await request(CMD_GET_MODE);
   if(f.status!==STATUS_OK||f.data.length<2) throw new Error("status 0x"+f.status.toString(16));
   devState=f.data[0]; devMode=f.data[1]; devFlags=f.data[2]||0;
-  cmsg("Device is "+(STATES[devState]||"state "+devState)+" · active mode: "+(MODES[devMode]||devMode)+(devMode===MODE_CANARY?"":(devMode===MODE_GDB?" · GDB gateway runs over USB-CDC; connect gdb there":(devMode===MODE_U2F?" · authenticator runs passively over NFC; nothing to fetch":" · no live alerts in this mode, use Fetch saved events"))));
+  cmsg("Device is "+(STATES[devState]||"state "+devState)+" · active mode: "+(MODES[devMode]||devMode)+(devMode===MODE_CANARY?"":(devMode===MODE_GDB?" · GDB gateway runs over USB-CDC; connect gdb there":(devMode===MODE_U2F?" · FIDO2 authenticator runs over NFC, USB and BLE; nothing to fetch":" · no live alerts in this mode, use Fetch saved events"))));
   $("test").textContent = devMode===MODE_EMUL ? "Commit session now" : (ACTION_MODES.includes(devMode) ? "Trigger" : "Send test event");
   $("test").style.display = (devMode===MODE_CANARY||devMode===MODE_EMUL||ACTION_MODES.includes(devMode)) ? "" : "none";
   if(MODES[devMode]) $("modeSel").value=String(devMode);

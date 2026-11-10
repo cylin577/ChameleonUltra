@@ -1,36 +1,45 @@
 /*
- * mode_u2f.c — FIDO2 (CTAP2) + U2F (CTAP1) authenticator over NFC, standalone.
+ * mode_u2f.c — FIDO2 (CTAP2) + U2F (CTAP1) authenticator, standalone mode.
  *
- * Emulates an ISO-14443-4 token on the FIDO applet AID. SELECT answers
- * "FIDO_2_0" so phones drive it over CTAP2 (NFCCTAP_MSG, INS 0x10): GetInfo,
- * MakeCredential, GetAssertion in CBOR. U2F APDUs (INS 0x01/0x02) stay handled
- * as a CTAP1 fallback for PC/second-CU readers. The tested T=CL engine
- * (nfc_14a_4) does all ISO-DEP framing; responses are processed in on_tick so
- * S(WTX) keeps the reader waiting while ECDSA runs, and 61xx chaining returns
- * oversized results.
+ * One authenticator, three transports:
+ *   - NFC : ISO-14443-4 T=CL. NFCCTAP_MSG (INS 0x10) carries a CTAP2 command;
+ *           U2F APDUs (INS 0x01/0x02) stay handled as the CTAP1 fallback.
+ *   - USB : CTAPHID — 64-byte HID reports on usage page 0xF1D0.
+ *   - BLE : FIDO GATT service 0xFFFD.
+ *
+ * All three hand their bytes to the same transport-independent core
+ * (fido2_core.c), which owns the crypto (stateless key wrapping, ECDSA, CBOR)
+ * and a single request slot; the CTAP1 path shares the core's master key and
+ * sign counter. The tested T=CL engine (nfc_14a_4) does all ISO-DEP framing;
+ * responses are processed in on_tick so S(WTX) keeps the reader waiting while
+ * ECDSA runs, and 61xx chaining returns oversized results.
  *
  * NOTE: CTAP2 here is non-UV (up-only, non-resident) — no clientPIN. Works for
  * UV-discouraged / second-factor WebAuthn; passkeys (UV-required) need PIN.
  *
  * Stateless key wrapping — no per-credential flash:
- *   priv = HMAC-SHA256(mk, 0x01 | appId32 | nonce32)   (P-256 scalar)
- *   kh   = nonce32 | HMAC-SHA256(mk, 0x02 | appId32 | nonce32)32
+ *   priv = HMAC-SHA256(mk, 0x01 | rpIdHash32 | nonce32)   (P-256 scalar)
+ *   kh   = nonce32 | HMAC-SHA256(mk, 0x02 | rpIdHash32 | nonce32)32
  * Only a 32-byte master key and a 4-byte global counter live in FDS. A key
- * handle is bound to its appId by the MAC, so it cannot be used on another
+ * handle is bound to its rpId by the MAC, so it cannot be used on another
  * origin. Keys live in internal flash, not a secure element — research use.
  *
- * Crypto: self-contained SHA-256/HMAC below; micro-ecc (uECC) for P-256.
+ * Crypto: SHA-256/HMAC/ECDSA live in fido2_core.c; micro-ecc (uECC) for P-256.
  */
 
 #include <stdint.h>
 #include <string.h>
 #include "app_standalone.h"
+#include "app_timer.h"
 #include "standalone_led.h"
 #include "nfc_14a.h"
 #include "rfid/nfctag/hf/nfc_14a_4.h"
 #include "utils/fds_util.h"
 #include "nrf_drv_rng.h"
 #include "uECC.h"
+#include "fido2_core.h"
+#include "fido2_hid.h"
+#include "fido2_ble.h"
 
 #define NRF_LOG_MODULE_NAME u2f
 #include "nrf_log.h"
@@ -49,9 +58,8 @@ NRF_LOG_MODULE_REGISTER();
 #define SW_CONDITIONS_NOT_SAT     0x6985   /* also: test-of-presence / check-only "mine" */
 #define SW_WRONG_DATA             0x6A80
 #define SW_WRONG_LENGTH           0x6700
-#define SW_CLA_NOT_SUPPORTED      0x6E00
-#define SW_INS_NOT_SUPPORTED      0x6D00
 #define SW_FILE_NOT_FOUND         0x6A82
+#define SW_INS_NOT_SUPPORTED      0x6D00
 
 /* ---- U2F / ISO7816 instructions ---- */
 #define U2F_INS_REGISTER     0x01
@@ -71,44 +79,12 @@ static const uint8_t U2F_V2[]    = {'U','2','F','_','V','2'};
 /* ---- CTAP2 / FIDO2 (NFCCTAP) ---- */
 #define NFCCTAP_MSG          0x10   /* CLA 0x80: carries a CTAP2 command         */
 #define NFCCTAP_GETRESPONSE  0x11   /* CLA 0x80: fetch more of a chained response */
-#define CTAP_CMD_MAKE_CRED   0x01
-#define CTAP_CMD_GET_ASSERT  0x02
-#define CTAP_CMD_GET_INFO    0x04
-#define CTAP_CMD_CLIENT_PIN  0x06
-#define CTAP_CMD_RESET       0x07
 /* CTAP status bytes (first byte of a CTAP response) */
 #define CTAP2_OK                     0x00
-#define CTAP1_ERR_INVALID_CMD        0x01
 #define CTAP1_ERR_INVALID_LENGTH     0x03
-#define CTAP2_ERR_INVALID_CBOR       0x12
-#define CTAP2_ERR_MISSING_PARAMETER  0x14
 #define CTAP2_ERR_OPERATION_DENIED   0x27
-#define CTAP2_ERR_UNSUPPORTED_OPTION 0x2B
-#define CTAP2_ERR_NO_CREDENTIALS     0x2E
 
 static const uint8_t FIDO2_V[] = {'F','I','D','O','_','2','_','0'};
-
-/* AAGUID — fixed 16-byte authenticator model id (also embedded in GETINFO_CBOR
- * and in each MakeCredential attestedCredentialData). */
-static const uint8_t AAGUID[16] = {
-    0x50,0x68,0x72,0x65,0x61,0x6b,0x62,0x79,0x74,0x65,0x55,0x32,0x46,0x32,0x00,0x01
-};
-
-/* authenticatorGetInfo response (static CBOR, non-UV up-only non-resident):
- *   {1:["FIDO_2_0"], 3:h'<aaguid>',
- *    4:{"rk":false,"up":true,"makeCredUvNotRqd":true}}
- * makeCredUvNotRqd lets a CTAP2.1 platform create a credential with user
- * presence only; without it, modern Android assumes UV is required and aborts
- * after GetInfo (never sending MakeCredential) since we expose no PIN/UV. */
-static const uint8_t GETINFO_CBOR[] = {
-    0xA3,
-    0x01, 0x81, 0x68, 'F','I','D','O','_','2','_','0',
-    0x03, 0x50, 0x50,0x68,0x72,0x65,0x61,0x6b,0x62,0x79,0x74,0x65,0x55,0x32,0x46,0x32,0x00,0x01,
-    0x04, 0xA3,
-        0x62,'r','k',0xF4,
-        0x62,'u','p',0xF5,
-        0x70,'m','a','k','e','C','r','e','d','U','v','N','o','t','R','q','d',0xF5
-};
 
 /* =====================================================================
  *  Attestation material is provisioned at RUNTIME, no code edit needed:
@@ -124,19 +100,23 @@ static const uint8_t U2F_ATT_CERT_DEFAULT[]   = { 0x30, 0x00 };
 /* ---- session ---- */
 static nfc_tag_14a_4_tcl_state_t m_tcl;
 static uint8_t  m_uid[7];
-/* 4-byte aligned: FDS write source data must be word-aligned. */
-static uint8_t  m_mk[32]       __attribute__((aligned(4)));
-static uint32_t m_ctr;
 static uint8_t  m_att_priv[32] __attribute__((aligned(4)));   /* from FDS or default */
+static uint32_t m_clock_ticks;
+static uint32_t m_clock_ms;
 
-/* Large response + ISO7816 GET RESPONSE chaining (REGISTER can exceed FSC). */
-static uint8_t  m_big[640];
+/* Large response + ISO7816 GET RESPONSE chaining. 768 B covers the worst
+ * case of the CTAP1 REGISTER response (66 + 1 + 64 + 512 cert + 72 sig + SW). */
+static uint8_t  m_big[768];
 static uint16_t m_big_len;
 static uint16_t m_big_off;
+/* CTAP2 response from the core (status byte + CBOR). */
+static uint8_t  m_ctap_resp[FIDO2_MAX_RESPONSE];
 /* CTAP2 (NFCCTAP) responses must go out in one ISO-DEP frame: this phone does
  * not continue an NFCCTAP response via 61 XX / GET RESPONSE (it re-SELECTs). The
  * U2F path keeps small-frame 61 XX chaining, which real U2F readers do follow. */
 static bool     m_ctap2_resp;
+/* A CTAP2 command was handed to the core; the answer is emitted later. */
+static bool     m_ctap2_pending;
 
 /* fixed anti-collision identity: ISO-14443-4 (SAK bit 0x20) + a minimal ATS */
 static nfc_tag_14a_uid_size s_uid_size = NFC_TAG_14A_UID_DOUBLE_SIZE;
@@ -165,102 +145,61 @@ static nfc_tag_14a_coll_res_reference_t *u2f_get_coll_res(void) {
 }
 
 /* ===================================================================== */
-/*  SHA-256 + HMAC-SHA256 (self-contained, FIPS 180-4 / RFC 2104)         */
-/* ===================================================================== */
-typedef struct { uint32_t s[8]; uint64_t n; uint8_t b[64]; uint8_t bl; } sha256_t;
-
-static const uint32_t K256[64] = {
-    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-};
-#define ROR(x,n) (((x)>>(n))|((x)<<(32-(n))))
-
-static void sha256_blk(sha256_t *c, const uint8_t *p) {
-    uint32_t w[64], a,b,cc,d,e,f,g,h,t1,t2;
-    for (int i=0;i<16;i++) w[i]=(p[i*4]<<24)|(p[i*4+1]<<16)|(p[i*4+2]<<8)|p[i*4+3];
-    for (int i=16;i<64;i++){
-        uint32_t s0=ROR(w[i-15],7)^ROR(w[i-15],18)^(w[i-15]>>3);
-        uint32_t s1=ROR(w[i-2],17)^ROR(w[i-2],19)^(w[i-2]>>10);
-        w[i]=w[i-16]+s0+w[i-7]+s1;
-    }
-    a=c->s[0];b=c->s[1];cc=c->s[2];d=c->s[3];e=c->s[4];f=c->s[5];g=c->s[6];h=c->s[7];
-    for (int i=0;i<64;i++){
-        uint32_t S1=ROR(e,6)^ROR(e,11)^ROR(e,25), ch=(e&f)^((~e)&g);
-        t1=h+S1+ch+K256[i]+w[i];
-        uint32_t S0=ROR(a,2)^ROR(a,13)^ROR(a,22), mj=(a&b)^(a&cc)^(b&cc);
-        t2=S0+mj;
-        h=g;g=f;f=e;e=d+t1;d=cc;cc=b;b=a;a=t1+t2;
-    }
-    c->s[0]+=a;c->s[1]+=b;c->s[2]+=cc;c->s[3]+=d;c->s[4]+=e;c->s[5]+=f;c->s[6]+=g;c->s[7]+=h;
-}
-static void sha256_init(sha256_t *c){
-    c->s[0]=0x6a09e667;c->s[1]=0xbb67ae85;c->s[2]=0x3c6ef372;c->s[3]=0xa54ff53a;
-    c->s[4]=0x510e527f;c->s[5]=0x9b05688c;c->s[6]=0x1f83d9ab;c->s[7]=0x5be0cd19;
-    c->n=0;c->bl=0;
-}
-static void sha256_upd(sha256_t *c, const uint8_t *p, size_t n){
-    c->n+=n;
-    while(n){
-        uint8_t k=64-c->bl; if(k>n)k=n;
-        memcpy(c->b+c->bl,p,k); c->bl+=k; p+=k; n-=k;
-        if(c->bl==64){ sha256_blk(c,c->b); c->bl=0; }
-    }
-}
-static void sha256_fin(sha256_t *c, uint8_t out[32]){
-    uint64_t bits=c->n*8; uint8_t pad=0x80;
-    sha256_upd(c,&pad,1);
-    uint8_t z=0; while(c->bl!=56) sha256_upd(c,&z,1);
-    uint8_t L[8]; for(int i=0;i<8;i++) L[i]=(uint8_t)(bits>>(56-8*i));
-    sha256_upd(c,L,8);
-    for(int i=0;i<8;i++){ out[i*4]=c->s[i]>>24;out[i*4+1]=c->s[i]>>16;out[i*4+2]=c->s[i]>>8;out[i*4+3]=c->s[i]; }
-}
-static void hmac_sha256(const uint8_t *key, size_t kl, const uint8_t *msg, size_t ml, uint8_t out[32]){
-    uint8_t k[64]={0}, ip[64], op[64], ih[32]; sha256_t c;
-    if(kl>64){ sha256_init(&c); sha256_upd(&c,key,kl); sha256_fin(&c,k); } else memcpy(k,key,kl);
-    for(int i=0;i<64;i++){ ip[i]=k[i]^0x36; op[i]=k[i]^0x5c; }
-    sha256_init(&c); sha256_upd(&c,ip,64); sha256_upd(&c,msg,ml); sha256_fin(&c,ih);
-    sha256_init(&c); sha256_upd(&c,op,64); sha256_upd(&c,ih,32); sha256_fin(&c,out);
-}
-
+/*  Platform hooks for the FIDO2 core: FDS persistence + hardware RNG     */
 /* ===================================================================== */
 static int u2f_rng(uint8_t *dest, unsigned size){
     return nrf_drv_rng_rand(dest, (uint8_t)size) == NRF_SUCCESS ? 1 : 0;
 }
 
-/* DER-encode an ECDSA (r,s) pair (each 32 bytes) into out. Returns length. */
-static uint16_t der_sig(const uint8_t *rs, uint8_t *out){
-    const uint8_t *r=rs, *s=rs+32;
-    uint8_t rb[33], sb[33]; int rl=32, sl=32;
-    memcpy(rb, r, 32); memcpy(sb, s, 32);
-    /* strip leading zeros, then prepend one if high bit set (positive INTEGER) */
-    int ro=0; while(ro<31 && rb[ro]==0) ro++; rl=32-ro;
-    uint8_t rbuf[33]; int rn=0; if(rb[ro]&0x80) rbuf[rn++]=0x00; memcpy(rbuf+rn, rb+ro, rl); rn+=rl;
-    int so=0; while(so<31 && sb[so]==0) so++; sl=32-so;
-    uint8_t sbuf[33]; int sn=0; if(sb[so]&0x80) sbuf[sn++]=0x00; memcpy(sbuf+sn, sb+so, sl); sn+=sl;
-    uint16_t i=0;
-    out[i++]=0x30; out[i++]=(uint8_t)(2+rn+2+sn);
-    out[i++]=0x02; out[i++]=(uint8_t)rn; memcpy(out+i, rbuf, rn); i+=rn;
-    out[i++]=0x02; out[i++]=(uint8_t)sn; memcpy(out+i, sbuf, sn); i+=sn;
-    return i;
+static bool io_load_master_key(uint8_t mk[32]) {
+    uint16_t len = sizeof(uint8_t) * 32;
+    if (!fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_MK, &len, mk)) return false;
+    return len == 32;
 }
 
-/* Derive the per-credential private key and the handle MAC from (appId,nonce). */
-static void derive_priv(const uint8_t *app, const uint8_t *nonce, uint8_t priv[32]){
-    uint8_t in[1+32+32]; in[0]=0x01; memcpy(in+1,app,32); memcpy(in+33,nonce,32);
-    hmac_sha256(m_mk, sizeof(m_mk), in, sizeof(in), priv);
-}
-static void derive_mac(const uint8_t *app, const uint8_t *nonce, uint8_t mac[32]){
-    uint8_t in[1+32+32]; in[0]=0x02; memcpy(in+1,app,32); memcpy(in+33,nonce,32);
-    hmac_sha256(m_mk, sizeof(m_mk), in, sizeof(in), mac);
+static bool io_store_master_key(const uint8_t mk[32]) {
+    /* FDS wants word-aligned source data; the core hands us a stack buffer. */
+    static uint32_t buf[32 / 4];
+    memcpy(buf, mk, 32);
+    return fds_write_sync(U2F_FDS_FILE, U2F_FDS_KEY_MK, 32, buf);
 }
 
-static void ctr_save(void){ fds_write_sync(U2F_FDS_FILE, U2F_FDS_KEY_CTR, sizeof(m_ctr), &m_ctr); }
+static bool io_load_counter(uint32_t *ctr) {
+    uint16_t len = sizeof(uint32_t);
+    if (!fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_CTR, &len, (uint8_t *)ctr)) return false;
+    return len == sizeof(uint32_t);
+}
+
+static void io_store_counter(uint32_t ctr) {
+    fds_write_sync(U2F_FDS_FILE, U2F_FDS_KEY_CTR, sizeof(uint32_t), &ctr);
+}
+
+static bool io_random(uint8_t *dst, size_t len) {
+    while (len) {
+        uint8_t chunk = (len > 32) ? 32 : (uint8_t)len;
+        if (nrf_drv_rng_rand(dst, chunk) != NRF_SUCCESS) return false;
+        dst += chunk;
+        len -= chunk;
+    }
+    return true;
+}
+
+static uint32_t io_now_ms(void) {
+    uint32_t ticks = app_timer_cnt_get();
+    uint32_t elapsed = app_timer_cnt_diff_compute(ticks, m_clock_ticks);
+    m_clock_ticks = ticks;
+    m_clock_ms += (uint32_t)(((uint64_t)elapsed * 1000U) / APP_TIMER_TICKS(1000));
+    return m_clock_ms;
+}
+
+static const fido2_core_io_t m_core_io = {
+    .load_master_key  = io_load_master_key,
+    .store_master_key = io_store_master_key,
+    .load_counter     = io_load_counter,
+    .store_counter    = io_store_counter,
+    .random_bytes     = io_random,
+    .now_ms           = io_now_ms,
+};
 
 /* Provision the attestation key (32 bytes) + cert (DER) into FDS at runtime,
  * so users set them over the CLI instead of editing source. Takes effect on
@@ -310,20 +249,24 @@ static uint16_t do_register(const uint8_t *body, uint16_t lc, uint8_t *out){
     for (int tries=0; ; tries++){
         if (tries>8) return put_sw(out,0,SW_WRONG_DATA);
         if (!u2f_rng(nonce,32)) return put_sw(out,0,SW_WRONG_DATA);
-        derive_priv(app, nonce, priv);
+        fido2_derive_priv(app, nonce, priv);
         if (uECC_compute_public_key(priv, pub, C)) break;   /* valid scalar */
     }
-    derive_mac(app, nonce, mac);
+    fido2_derive_mac(app, nonce, mac);
     memcpy(kh, nonce, 32); memcpy(kh+32, mac, 32);
 
     /* attestation signature over 0x00 | app | chal | kh | 0x04|pub */
     uint8_t pub65[65]; pub65[0]=0x04; memcpy(pub65+1, pub, 64);
-    sha256_t c; uint8_t h[32]; uint8_t pfx=0x00;
-    sha256_init(&c); sha256_upd(&c,&pfx,1); sha256_upd(&c,app,32); sha256_upd(&c,chal,32);
-    sha256_upd(&c,kh,KH_LEN); sha256_upd(&c,pub65,65); sha256_fin(&c,h);
-    uint8_t sig_rs[64], sig_der[72];
-    if (!uECC_sign(m_att_priv, h, 32, sig_rs, C)) return put_sw(out,0,SW_WRONG_DATA);
-    uint16_t sig_len = der_sig(sig_rs, sig_der);
+    uint8_t pre[1 + 32 + 32 + KH_LEN + 65];
+    pre[0]=0x00;
+    memcpy(pre+1, app, 32);
+    memcpy(pre+33, chal, 32);
+    memcpy(pre+65, kh, KH_LEN);
+    memcpy(pre+65+KH_LEN, pub65, 65);
+    uint8_t h[32]; fido2_sha256(pre, sizeof(pre), h);
+    uint8_t sig_der[72];
+    uint16_t sig_len = fido2_sign_der(m_att_priv, h, sig_der, sizeof(sig_der));
+    if (!sig_len) return put_sw(out,0,SW_WRONG_DATA);
 
     /* attestation cert: provisioned record (FDS, zero-copy) or the fallback */
     fds_record_desc_t cdesc; uint16_t clen = 0;
@@ -351,23 +294,25 @@ static uint16_t do_authenticate(uint8_t p1, const uint8_t *body, uint16_t lc, ui
     if (khl != KH_LEN || lc < (uint16_t)(65+khl)) return put_sw(out,0,SW_WRONG_DATA);
     const uint8_t *kh=body+65, *nonce=kh, *mac=kh+32;
 
-    uint8_t want[32]; derive_mac(app, nonce, want);
+    uint8_t want[32]; fido2_derive_mac(app, nonce, want);
     if (memcmp(want, mac, 32) != 0) return put_sw(out,0,SW_WRONG_DATA);  /* not ours */
     if (p1 == U2F_AUTH_CHECK_ONLY) return put_sw(out,0,SW_CONDITIONS_NOT_SAT); /* "mine" */
 
     /* NFC tap is the presence gesture. */
     uint8_t up=0x01;
-    m_ctr++; ctr_save();
-    uint8_t ctb[4]={ (uint8_t)(m_ctr>>24),(uint8_t)(m_ctr>>16),(uint8_t)(m_ctr>>8),(uint8_t)m_ctr };
+    uint32_t ctr = fido2_core_next_counter();
+    uint8_t ctb[4]={ (uint8_t)(ctr>>24),(uint8_t)(ctr>>16),(uint8_t)(ctr>>8),(uint8_t)ctr };
 
-    uint8_t priv[32]; derive_priv(app, nonce, priv);
-    sha256_t c; uint8_t h[32];
-    sha256_init(&c); sha256_upd(&c,app,32); sha256_upd(&c,&up,1); sha256_upd(&c,ctb,4); sha256_upd(&c,chal,32);
-    sha256_fin(&c,h);
-    uint8_t sig_rs[64], sig_der[72];
-    uECC_Curve C = uECC_secp256r1();
-    if (!uECC_sign(priv, h, 32, sig_rs, C)) return put_sw(out,0,SW_WRONG_DATA);
-    uint16_t sig_len = der_sig(sig_rs, sig_der);
+    uint8_t priv[32]; fido2_derive_priv(app, nonce, priv);
+    uint8_t pre[32 + 1 + 4 + 32];
+    memcpy(pre, app, 32);
+    pre[32] = up;
+    memcpy(pre+33, ctb, 4);
+    memcpy(pre+37, chal, 32);
+    uint8_t h[32]; fido2_sha256(pre, sizeof(pre), h);
+    uint8_t sig_der[72];
+    uint16_t sig_len = fido2_sign_der(priv, h, sig_der, sizeof(sig_der));
+    if (!sig_len) return put_sw(out,0,SW_WRONG_DATA);
 
     uint16_t i=0;
     out[i++]=up; memcpy(out+i, ctb, 4); i+=4;
@@ -376,240 +321,10 @@ static uint16_t do_authenticate(uint8_t p1, const uint8_t *body, uint16_t lc, ui
     return i;
 }
 
-/* Build a CTAP response into m_big: [status][cbor...] then SW 9000 (NFCCTAP
- * always returns 9000 at the APDU layer; the CTAP status lives in byte 0). */
-static uint16_t ctap_err(uint8_t status){
-    m_big[0] = status;
-    m_big_len = put_sw(m_big, 1, SW_NO_ERROR);
-    return m_big_len;
-}
-
-/* ---- minimal definite-length CBOR reader (the subset CTAP input uses) ---- */
-typedef struct { const uint8_t *p, *end; } cbor_t;
-
-/* Read a data item head: major type + argument. Advances past any argument. */
-static bool cbor_head(cbor_t *c, uint8_t *major, uint64_t *val){
-    if (c->p >= c->end) return false;
-    uint8_t ib = *c->p++, ai = ib & 0x1F;
-    *major = ib >> 5;
-    if (ai < 24) { *val = ai; return true; }
-    uint8_t nb = (ai == 24) ? 1 : (ai == 25) ? 2 : (ai == 26) ? 4 : (ai == 27) ? 8 : 0xFF;
-    if (nb == 0xFF || c->p + nb > c->end) return false;
-    uint64_t v = 0;
-    for (uint8_t i = 0; i < nb; i++) v = (v << 8) | *c->p++;
-    *val = v;
-    return true;
-}
-
-/* Read a byte or text string: point ptr/len at its body, advance past it. */
-static bool cbor_str(cbor_t *c, const uint8_t **ptr, uint64_t *len){
-    uint8_t m; uint64_t v;
-    /* Compare against the remaining length, not c->p + v: v comes straight off
-     * the wire (up to 2^64-1 via an 8-byte length argument) and c->p/c->end are
-     * 32-bit pointers, so c->p + v can wrap and pass a bogus huge v. end - p is
-     * always a small, valid difference and can't wrap. */
-    if (!cbor_head(c, &m, &v) || (m != 2 && m != 3) || v > (uint64_t)(c->end - c->p)) return false;
-    *ptr = c->p; *len = v; c->p += v;
-    return true;
-}
-
-/* Skip one item (recursively for arrays/maps). */
-static bool cbor_skip(cbor_t *c){
-    uint8_t m; uint64_t v;
-    if (!cbor_head(c, &m, &v)) return false;
-    switch (m) {
-    case 0: case 1: case 7: return true;                 /* uint / negint / simple */
-    case 2: case 3: if (v > (uint64_t)(c->end - c->p)) return false; c->p += v; return true;
-    case 4: for (uint64_t i = 0; i < v; i++) if (!cbor_skip(c)) return false; return true;
-    case 5: for (uint64_t i = 0; i < 2 * v; i++) if (!cbor_skip(c)) return false; return true;
-    default: return false;
-    }
-}
-
-/* Is this map-key the text string "id"? (leaves cursor after the key either way) */
-static bool key_is(const uint8_t *ks, uint64_t kl, const char *s){
-    size_t n = strlen(s);
-    return kl == n && memcmp(ks, s, n) == 0;
-}
-
-/* COSE_Key for a P-256 public key: {1:2,3:-7,-1:1,-2:x,-3:y}. */
-static uint16_t cose_p256(uint8_t *o, const uint8_t *pub){
-    uint16_t i = 0;
-    o[i++] = 0xA5;
-    o[i++] = 0x01; o[i++] = 0x02;                         /* kty: EC2  */
-    o[i++] = 0x03; o[i++] = 0x26;                         /* alg: ES256 (-7) */
-    o[i++] = 0x20; o[i++] = 0x01;                         /* crv: P-256 */
-    o[i++] = 0x21; o[i++] = 0x58; o[i++] = 0x20; memcpy(o + i, pub, 32);      i += 32;  /* x */
-    o[i++] = 0x22; o[i++] = 0x58; o[i++] = 0x20; memcpy(o + i, pub + 32, 32); i += 32;  /* y */
-    return i;
-}
-
-static void sc4_of(uint32_t v, uint8_t *o){
-    o[0]=(uint8_t)(v>>24); o[1]=(uint8_t)(v>>16); o[2]=(uint8_t)(v>>8); o[3]=(uint8_t)v;
-}
-
-/* authenticatorMakeCredential — non-UV, non-resident, self (packed) attestation.
- * We only need clientDataHash (key 1) and rp.id (key 2); the credential is the
- * same stateless key-wrap U2F uses, so no credential is stored. */
-static uint16_t ctap_make_credential(const uint8_t *d, uint16_t len){
-    cbor_t c = { d, d + len };
-    uint8_t m; uint64_t np;
-    if (!cbor_head(&c, &m, &np) || m != 5) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-
-    const uint8_t *cdh = NULL, *rpid = NULL; uint64_t cdh_len = 0, rpid_len = 0;
-    for (uint64_t i = 0; i < np; i++) {
-        uint8_t km; uint64_t key;
-        if (!cbor_head(&c, &km, &key) || km != 0) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-        if (key == 1) {                                  /* clientDataHash */
-            if (!cbor_str(&c, &cdh, &cdh_len)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-        } else if (key == 2) {                           /* rp: find "id" */
-            uint8_t rm; uint64_t rn;
-            if (!cbor_head(&c, &rm, &rn) || rm != 5) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-            for (uint64_t j = 0; j < rn; j++) {
-                const uint8_t *ks; uint64_t kl;
-                if (!cbor_str(&c, &ks, &kl)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-                if (key_is(ks, kl, "id")) {
-                    if (!cbor_str(&c, &rpid, &rpid_len)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-                } else if (!cbor_skip(&c)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-            }
-        } else if (!cbor_skip(&c)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-    }
-    if (!cdh || cdh_len != 32 || !rpid) return ctap_err(CTAP2_ERR_MISSING_PARAMETER);
-
-    uint8_t rpIdHash[32]; sha256_t sc;
-    sha256_init(&sc); sha256_upd(&sc, rpid, rpid_len); sha256_fin(&sc, rpIdHash);
-
-    uint8_t nonce[32], priv[32], pub[64], mac[32];
-    uECC_Curve C = uECC_secp256r1();
-    for (int t = 0; ; t++) {
-        if (t > 8) return ctap_err(CTAP2_ERR_OPERATION_DENIED);
-        if (!u2f_rng(nonce, 32)) return ctap_err(CTAP2_ERR_OPERATION_DENIED);
-        derive_priv(rpIdHash, nonce, priv);
-        if (uECC_compute_public_key(priv, pub, C)) break;
-    }
-    derive_mac(rpIdHash, nonce, mac);
-    uint8_t credId[KH_LEN]; memcpy(credId, nonce, 32); memcpy(credId + 32, mac, 32);
-
-    m_ctr++; ctr_save();
-    uint8_t sc4[4]; sc4_of(m_ctr, sc4);
-
-    /* authData = rpIdHash | flags(UP|AT) | signCount | attestedCredentialData */
-    uint8_t ad[256]; uint16_t ap = 0;
-    memcpy(ad + ap, rpIdHash, 32); ap += 32;
-    ad[ap++] = 0x41;                                     /* UP(0x01) | AT(0x40) */
-    memcpy(ad + ap, sc4, 4); ap += 4;
-    memcpy(ad + ap, AAGUID, 16); ap += 16;
-    ad[ap++] = 0x00; ad[ap++] = KH_LEN;                  /* credentialId length */
-    memcpy(ad + ap, credId, KH_LEN); ap += KH_LEN;
-    ap += cose_p256(ad + ap, pub);
-
-    (void)cdh;   /* "none" attestation signs nothing at registration */
-
-    /* response map {1:"none", 2:authData, 3:{}} — "none" attestation keeps the
-     * response in a single frame (packed self-attestation would overrun the
-     * 260-byte frame buffer). The RP records the pubkey from authData; the
-     * credential proves possession at GetAssertion. */
-    uint8_t *o = m_big; uint16_t i = 0;
-    o[i++] = CTAP2_OK;
-    o[i++] = 0xA3;
-    o[i++] = 0x01; o[i++] = 0x64; memcpy(o + i, "none", 4); i += 4;
-    o[i++] = 0x02; o[i++] = 0x58; o[i++] = (uint8_t)ap; memcpy(o + i, ad, ap); i += ap;
-    o[i++] = 0x03; o[i++] = 0xA0;                        /* attStmt: {} */
-    m_big_len = put_sw(o, i, SW_NO_ERROR);
-    return m_big_len;
-}
-
-/* authenticatorGetAssertion — verifies the allow-list credential is ours, then
- * signs authData | clientDataHash. rpId(1), clientDataHash(2), allowList(3). */
-static uint16_t ctap_get_assertion(const uint8_t *d, uint16_t len){
-    cbor_t c = { d, d + len };
-    uint8_t m; uint64_t np;
-    if (!cbor_head(&c, &m, &np) || m != 5) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-
-    const uint8_t *rpid = NULL, *cdh = NULL, *credId = NULL;
-    uint64_t rpid_len = 0, cdh_len = 0, credId_len = 0;
-    for (uint64_t i = 0; i < np; i++) {
-        uint8_t km; uint64_t key;
-        if (!cbor_head(&c, &km, &key) || km != 0) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-        if (key == 1) {                                  /* rpId */
-            if (!cbor_str(&c, &rpid, &rpid_len)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-        } else if (key == 2) {                           /* clientDataHash */
-            if (!cbor_str(&c, &cdh, &cdh_len)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-        } else if (key == 3) {                           /* allowList: first id */
-            uint8_t am; uint64_t an;
-            if (!cbor_head(&c, &am, &an) || am != 4) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-            for (uint64_t j = 0; j < an; j++) {
-                uint8_t em; uint64_t en;
-                if (!cbor_head(&c, &em, &en) || em != 5) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-                for (uint64_t k = 0; k < en; k++) {
-                    const uint8_t *ks; uint64_t kl;
-                    if (!cbor_str(&c, &ks, &kl)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-                    if (key_is(ks, kl, "id") && !credId) {
-                        if (!cbor_str(&c, &credId, &credId_len)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-                    } else if (!cbor_skip(&c)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-                }
-            }
-        } else if (!cbor_skip(&c)) return ctap_err(CTAP2_ERR_INVALID_CBOR);
-    }
-    if (!rpid || !cdh || cdh_len != 32) return ctap_err(CTAP2_ERR_MISSING_PARAMETER);
-    if (!credId || credId_len != KH_LEN) return ctap_err(CTAP2_ERR_NO_CREDENTIALS);
-
-    uint8_t rpIdHash[32]; sha256_t sc;
-    sha256_init(&sc); sha256_upd(&sc, rpid, rpid_len); sha256_fin(&sc, rpIdHash);
-
-    const uint8_t *nonce = credId, *mac = credId + 32;
-    uint8_t want[32]; derive_mac(rpIdHash, nonce, want);
-    if (memcmp(want, mac, 32) != 0) return ctap_err(CTAP2_ERR_NO_CREDENTIALS);  /* not ours */
-    uint8_t priv[32]; derive_priv(rpIdHash, nonce, priv);
-
-    m_ctr++; ctr_save();
-    uint8_t sc4[4]; sc4_of(m_ctr, sc4);
-
-    uint8_t ad[37];                                      /* rpIdHash | flags(UP) | signCount */
-    memcpy(ad, rpIdHash, 32); ad[32] = 0x01; memcpy(ad + 33, sc4, 4);
-    uint8_t h[32];
-    sha256_init(&sc); sha256_upd(&sc, ad, 37); sha256_upd(&sc, cdh, 32); sha256_fin(&sc, h);
-    uint8_t sig_rs[64], sig_der[72];
-    uECC_Curve C = uECC_secp256r1();
-    if (!uECC_sign(priv, h, 32, sig_rs, C)) return ctap_err(CTAP2_ERR_OPERATION_DENIED);
-    uint16_t sl = der_sig(sig_rs, sig_der);
-
-    /* response {1:{id,type}, 2:authData, 3:signature} */
-    uint8_t *o = m_big; uint16_t i = 0;
-    o[i++] = CTAP2_OK;
-    o[i++] = 0xA3;
-    o[i++] = 0x01; o[i++] = 0xA2;
-    o[i++] = 0x62; o[i++]='i'; o[i++]='d'; o[i++] = 0x58; o[i++] = KH_LEN; memcpy(o + i, credId, KH_LEN); i += KH_LEN;
-    o[i++] = 0x64; o[i++]='t'; o[i++]='y'; o[i++]='p'; o[i++]='e';
-    o[i++] = 0x6A; memcpy(o + i, "public-key", 10); i += 10;
-    o[i++] = 0x02; o[i++] = 0x58; o[i++] = 37; memcpy(o + i, ad, 37); i += 37;
-    o[i++] = 0x03; o[i++] = 0x58; o[i++] = (uint8_t)sl; memcpy(o + i, sig_der, sl); i += sl;
-    m_big_len = put_sw(o, i, SW_NO_ERROR);
-    return m_big_len;
-}
-
-/* CTAP2 command dispatch. `d` = command byte + CBOR; `len` includes the cmd. */
-static uint16_t ctap2_dispatch(const uint8_t *d, uint16_t len){
-    if (!d || len < 1) return ctap_err(CTAP1_ERR_INVALID_LENGTH);
-    uint8_t cmd = d[0];
-    switch (cmd) {
-    case CTAP_CMD_GET_INFO:
-        m_big[0] = CTAP2_OK;
-        memcpy(m_big + 1, GETINFO_CBOR, sizeof(GETINFO_CBOR));
-        m_big_len = put_sw(m_big, 1 + sizeof(GETINFO_CBOR), SW_NO_ERROR);
-        return m_big_len;
-    case CTAP_CMD_MAKE_CRED:
-        return ctap_make_credential(d + 1, len - 1);
-    case CTAP_CMD_GET_ASSERT:
-        return ctap_get_assertion(d + 1, len - 1);
-    default:
-        return ctap_err(CTAP1_ERR_INVALID_CMD);
-    }
-}
-
 /* APDU dispatch → writes to m_big, returns total length (incl SW). */
 static uint16_t u2f_process(const uint8_t *a, uint16_t n){
     m_ctap2_resp = false;
+    m_ctap2_pending = false;
     if (n < 4) { m_big_len = put_sw(m_big,0,SW_WRONG_LENGTH); return m_big_len; }
     uint8_t cla=a[0], ins=a[1], p1=a[2];
     const uint8_t *body; uint16_t lc;
@@ -629,10 +344,24 @@ static uint16_t u2f_process(const uint8_t *a, uint16_t n){
         return m_big_len;
     }
 
-    /* CTAP2: NFCCTAP_MSG (CLA 80, INS 10) carries cmd byte + CBOR. */
+    /* CTAP2: NFCCTAP_MSG (CLA 80, INS 10) carries cmd byte + CBOR. The command
+     * is handed to the shared core; the answer is emitted by on_tick once the
+     * core is done (the reader waits on S(WTX) meanwhile). */
     if (cla == 0x80 && ins == NFCCTAP_MSG) {
-        m_ctap2_resp = true;                 /* single-frame response */
-        return ctap2_dispatch(body, lc);
+        m_ctap2_resp = true;                 /* layer-4 chained response */
+        if (!body || lc < 1) {
+            m_big[0] = CTAP1_ERR_INVALID_LENGTH;
+            m_big_len = put_sw(m_big, 1, SW_NO_ERROR);
+            return m_big_len;
+        }
+        if (!fido2_submit(FIDO2_OWNER_NFC, body, lc)) {
+            /* core busy (another transport) or mode not armed */
+            m_big[0] = CTAP2_ERR_OPERATION_DENIED;
+            m_big_len = put_sw(m_big, 1, SW_NO_ERROR);
+            return m_big_len;
+        }
+        m_ctap2_pending = true;
+        return 0;
     }
 
     /* U2F / CTAP1 fallback (CLA 00). */
@@ -734,26 +463,29 @@ static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len){
 
     uECC_set_rng(u2f_rng);
 
-    /* master key: load, or create on first use */
-    uint16_t mkl = sizeof(m_mk);
-    if (!fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_MK, &mkl, m_mk) || mkl != sizeof(m_mk)) {
-        if (!u2f_rng(m_mk, sizeof(m_mk))) return STANDALONE_RC_INVALID_STATE;
-        fds_write_sync(U2F_FDS_FILE, U2F_FDS_KEY_MK, sizeof(m_mk), m_mk);
-    }
-    uint16_t cl = sizeof(m_ctr);
-    if (!fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_CTR, &cl, (uint8_t *)&m_ctr) || cl != sizeof(m_ctr))
-        m_ctr = 0;
-
     /* attestation key: provisioned (FDS) overrides the compiled fallback */
     uint16_t apl = sizeof(m_att_priv);
     if (!fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_ATT_PRIV, &apl, m_att_priv) || apl != sizeof(m_att_priv))
         memcpy(m_att_priv, U2F_ATT_PRIV_DEFAULT, sizeof(m_att_priv));
+
+    /* Arm the shared core: it loads (or creates) the master key + counter and
+     * enables the three FIDO transports. */
+    m_clock_ticks = app_timer_cnt_get();
+    m_clock_ms = 0;
+    fido2_core_init(&m_core_io);
+    if (!fido2_core_arm(FIDO2_TRANSPORT_NFC | FIDO2_TRANSPORT_USB | FIDO2_TRANSPORT_BLE)) {
+        NRF_LOG_ERROR("u2f: core arm failed");
+        return STANDALONE_RC_INVALID_STATE;
+    }
+    fido2_hid_init();
+    fido2_ble_reset();
 
     if (!u2f_rng(m_uid, sizeof(m_uid))) return STANDALONE_RC_INVALID_STATE;
     m_uid[0] = 0x08;   /* RID-style first byte; avoids 0x88 cascade marker clash */
 
     nfc_tag_14a_4_reset_state(&m_tcl);
     m_big_len = 0; m_big_off = 0;
+    m_ctap2_pending = false;
 
     nfc_tag_14a_set_handler(&s_handler);
     nfc_tag_14a_set_relay_hold(true);    /* keep FRAMEDELAYMAX wide for slow ECDSA */
@@ -762,21 +494,39 @@ static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len){
 
     standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
     standalone_led_solid();
-    NRF_LOG_INFO("u2f: armed ctr=%lu", (unsigned long)m_ctr);
+    NRF_LOG_INFO("u2f: armed transports=%u", fido2_core_transport_mask());
     return STANDALONE_RC_OK;
 }
 
 static standalone_rc_t on_exit(void){
+    fido2_core_disarm();
+    fido2_hid_init();
+    fido2_ble_reset();
     nfc_tag_14a_set_relay_hold(false);
     nfc_tag_14a_set_frame_delay_max(0x00001000UL);
     nfc_tag_14a_set_state(NFC_TAG_STATE_14A_IDLE);
-    memset(m_mk, 0, sizeof(m_mk));
     return STANDALONE_RC_OK;
 }
 
-static standalone_rc_t on_tick(uint32_t now_ms){
-    (void)now_ms;
-    if (!m_tcl.m_apdu_pending) return STANDALONE_RC_OK;
+/* NFC half of the tick: hand the finished CTAP2 answer to the ISO-DEP layer,
+ * or process a pending APDU. */
+static void nfc_poll(void){
+    /* A CTAP2 answer finished in the core? */
+    if (fido2_response_ready(FIDO2_OWNER_NFC)) {
+        size_t rlen = 0;
+        if (fido2_take_response(FIDO2_OWNER_NFC, m_ctap_resp, sizeof(m_ctap_resp), &rlen)) {
+            if (rlen > sizeof(m_big) - 2) rlen = sizeof(m_big) - 2;
+            memcpy(m_big, m_ctap_resp, rlen);
+            m_big_len = put_sw(m_big, (uint16_t)rlen, SW_NO_ERROR);
+            m_big_off = m_big_len;        /* the whole answer goes out at once */
+            m_ctap2_pending = false;
+            m_ctap2_resp = true;
+            emit_ctap();
+        }
+        return;
+    }
+
+    if (!m_tcl.m_apdu_pending) return;
     m_tcl.m_apdu_pending = false;
 
     /* The NFCT RX leaves the 2-byte ISO14443 CRC on the frame (hardware CRC
@@ -792,19 +542,33 @@ static standalone_rc_t on_tick(uint32_t now_ms){
                    (cla == 0x80 && ins == NFCCTAP_GETRESPONSE);
     if (getresp && m_big_off < m_big_len) {
         emit_chunk();
-        return STANDALONE_RC_OK;
+        return;
     }
     u2f_process(m_tcl.m_apdu_buf, alen);
+    if (m_ctap2_pending) return;           /* core is still working on it */
     if (m_ctap2_resp) {
         emit_ctap();                  /* CTAP2: layer-4 chained response */
     } else {
         m_big_off = 0;
         emit_chunk();                 /* U2F: 61 XX GET-RESPONSE chunks */
     }
+}
+
+static standalone_rc_t on_tick(uint32_t now_ms){
+    (void)now_ms;
+    fido2_tick();          /* run the queued CTAP2 command (crypto included) */
+    fido2_hid_poll();      /* USB CTAPHID: emit the next response packet    */
+    fido2_ble_poll();      /* BLE FIDO GATT: emit the next response fragment */
+    nfc_poll();            /* NFC: CTAP2 answer / APDU processing           */
     return STANDALONE_RC_OK;
 }
 
-static standalone_rc_t on_button(standalone_button_evt_t evt){ (void)evt; return STANDALONE_RC_OK; }
+static standalone_rc_t on_button(standalone_button_evt_t evt) {
+    if (evt == STANDALONE_BTN_BOTH_SHORT) {
+        fido2_grant_user_presence();
+    }
+    return STANDALONE_RC_OK;
+}
 
 const standalone_mode_iface_t mode_u2f_iface = {
     .id               = STANDALONE_MODE_U2F,
@@ -812,6 +576,7 @@ const standalone_mode_iface_t mode_u2f_iface = {
     .writes_tag       = false,
     .writes_slot      = false,
     .wants_tick       = true,
+    .requires_physical_user_presence = true,
     .tick_interval_ms = 5,          /* answer APDUs promptly within the WTX window */
     .on_enter         = on_enter,
     .on_exit          = on_exit,

@@ -895,8 +895,79 @@ hwLog.command("clear", "Erase the stored debug log", [], async () => {
 // terminal's synchronous command model -- not registered; use `hw log dump`.
 
 // `hw u2f set-attestation` needs a local PEM/DER key+cert file and a crypto
-// library this terminal doesn't have -- the whole `hw u2f` group isn't
-// registered rather than left as an empty stub.
+// library this terminal doesn't have -- that one command isn't registered
+// rather than left as an empty stub. The CTAP2 commands below don't need any
+// of that: they just talk to the device's FIDO2 authenticator over the host
+// link (DATA_CMD_FIDO2_CTAP / 1067), which needs the u2f mode armed.
+
+/* ---- hw u2f ---- */
+const hwU2f = hw.subgroup("u2f", "FIDO2/U2F standalone mode");
+
+const FIDO2_CTAP_STATUS = {
+  0x00:"ok", 0x01:"invalid command", 0x03:"invalid length", 0x12:"invalid CBOR",
+  0x14:"missing parameter", 0x26:"unsupported algorithm",
+  0x27:"operation denied", 0x2B:"unsupported option",
+  0x2D:"keepalive cancel", 0x2E:"no credentials",
+};
+const FIDO2_CTAP_CMD = { "get-info":0x04, "make-credential":0x01, "get-assertion":0x02 };
+
+function fido2HexBytes(str, name, length){
+  const clean = (str||"").replace(/[^0-9a-fA-F]/g, "");
+  if(length && clean.length !== length*2)
+    throw new Error(name+" must be "+length+" bytes ("+length*2+" hex chars), got "+(clean.length/2));
+  const out=[];
+  for(let i=0;i+1<clean.length;i+=2) out.push(parseInt(clean.substr(i,2),16)||0);
+  return out;
+}
+
+async function fido2CtapSend(requestBytes){
+  need();
+  const f = okOrThrow(await request(CU.FIDO2_CTAP, requestBytes));
+  if(!f.data.length) return [" - Empty CTAP response."];
+  const status = f.data[0];
+  const lines = [" - CTAP status: 0x"+status.toString(16).padStart(2,"0")+" ("+(FIDO2_CTAP_STATUS[status]||"unknown")+")"];
+  if(f.data.length === 1) return lines;
+  try{
+    lines.push(" - Response:");
+    lines.push(fido2CborFormat(fido2CborDecode(f.data.slice(1)), 1));
+  }catch(e){
+    lines.push(" - Response payload ("+(f.data.length-1)+" bytes, not CBOR: "+e.message+")");
+    lines.push("   h'"+bhex(f.data.slice(1))+"'");
+  }
+  return lines;
+}
+
+hwU2f.command("get-info", "Send CTAP2 authenticatorGetInfo to the device's FIDO2 authenticator.", [], async () => {
+  return await fido2CtapSend([0x04]);
+});
+
+hwU2f.command("ctap", "Send a CTAP2 command to the device's FIDO2 authenticator.", [
+  {names:["--cmd"], takesValue:true, dest:"cmd", choices:["get-info","make-credential","get-assertion"]},
+  {names:["--rp-id"], takesValue:true, dest:"rpId"},
+  {names:["--client-data-hash"], takesValue:true, dest:"clientDataHash"},
+  {names:["--cred-id"], takesValue:true, dest:"credId"},
+  {names:["--raw"], takesValue:true, dest:"raw"},
+], async (a) => {
+  const cmd = a.cmd || "get-info";
+  let params = [];
+  if(a.raw !== undefined){
+    params = fido2HexBytes(a.raw, "--raw");
+  } else if(cmd === "make-credential"){
+    if(!a.rpId) throw new Error("--rp-id is required for make-credential");
+    if(!a.clientDataHash) throw new Error("--client-data-hash is required for make-credential");
+    params = fido2CborEncode(fido2CborMakeCredentialParams(
+      a.rpId, new Uint8Array(fido2HexBytes(a.clientDataHash, "--client-data-hash", 32))));
+  } else if(cmd === "get-assertion"){
+    if(!a.rpId) throw new Error("--rp-id is required for get-assertion");
+    if(!a.clientDataHash) throw new Error("--client-data-hash is required for get-assertion");
+    if(!a.credId) throw new Error("--cred-id is required for get-assertion");
+    params = fido2CborEncode(fido2CborGetAssertionParams(
+      a.rpId,
+      new Uint8Array(fido2HexBytes(a.clientDataHash, "--client-data-hash", 32)),
+      new Uint8Array(fido2HexBytes(a.credId, "--cred-id", 64))));
+  }
+  return await fido2CtapSend([FIDO2_CTAP_CMD[cmd]].concat(params));
+});
 
 /* ---- hw gdb --------------------------------------------------------
  * A GDB Remote Serial Protocol client for the gdb_gateway standalone mode,

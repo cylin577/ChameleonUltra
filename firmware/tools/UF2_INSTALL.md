@@ -229,6 +229,8 @@ cp objects/ultra-application.uf2 /run/media/$USER/CHAMELEON/
 ./flash-dfu-sdbl.sh         # SD + BL only   (ultra-dfu-sdbl.zip)
 ```
 
+> Full flash (bootloader + app): stage assets with `hw download ultra` (latest release by default, `--tag nightly` for the prerelease build), then `hw bl push` / `hw flash` — documented in `docs/flashing-and-bootloader.md` § "Full flash: bootloader + app (no SD step)" — check the SoftDevice match before skipping the SD.
+
 ### What the UF2 drive accepts
 
 The mass-storage (GhostFAT) transport honours a UF2 block only if its family ID

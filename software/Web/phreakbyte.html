@@ -396,6 +396,11 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
     <div id="rdwrap" style="display:none;margin-top:8px"><div class="det" id="rdiag">relay idle</div></div>
 
     <div class="block" style="margin-top:18px">
+      <h3>FIDO2 authenticator (u2f mode)</h3>
+      <div class="det">The <code>u2f</code> standalone mode runs a FIDO2 / CTAP2 authenticator over NFC, USB (CTAPHID) and BLE (FIDO GATT 0xFFFD). Arm the mode, then talk to the authenticator from the in-browser terminal: <code>hw u2f get-info</code> prints its capabilities, <code>hw u2f ctap --cmd make-credential --rp-id <domain> --client-data-hash <hex></code> runs a CTAP2 command. The Python CLI has the same <code>hw u2f ...</code> commands.</div>
+    </div>
+
+    <div class="block" style="margin-top:18px">
       <h3>Per-mode result (7011–7013)</h3>
       <div class="det">GET_AVAILABLE greys out modes this build doesn't have compiled in. GET_RESULT_FOR / CLEAR_RESULT_FOR read or wipe a mode's stored log without first switching the active mode to it.</div>
       <div class="ctl" style="margin-top:10px">
@@ -1389,7 +1394,8 @@ AABBCCDDEEFF</textarea></label>
 <script src="disasm_thumb.js?v=1"></script>
 <script src="hf14ainfo.js?v=1"></script>
 <script src="multitap.js?v=4"></script>
-<script src="fullcmd.js?v=28"></script>
-<script src="terminal.js?v=20"></script>
+<script src="fido2_cbor.js?v=1"></script>
+<script src="fullcmd.js?v=29"></script>
+<script src="terminal.js?v=21"></script>
 </body>
 </html>

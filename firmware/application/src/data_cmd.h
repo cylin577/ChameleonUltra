@@ -82,6 +82,7 @@
 // bindings below; the IDs stay reserved.
 #define DATA_CMD_GET_MULTI_TAP_BINDINGS         (1065)  /* -> fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
 #define DATA_CMD_SET_MULTI_TAP_BINDINGS         (1066)  /* <- fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
+#define DATA_CMD_FIDO2_CTAP                     (1067)  /* u8 ctap_cmd + u8[] cbor -> u8 ctap_status + u8[] response (FIDO2 mode) */
 
 //
 // ******************************************************************
