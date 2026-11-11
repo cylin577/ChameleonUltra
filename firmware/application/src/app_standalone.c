@@ -536,11 +536,16 @@ standalone_rc_t app_standalone_clear_result(void) {
 
 /* Explicit-mode variants of the two above: find_mode() instead of
  * active_mode(), so a specific mode's result buffer can be read/cleared
- * regardless of which mode (if any) is currently armed. Safe to use on a
- * non-active mode: each mode's read_result()/clear_result() keeps its own
- * read cursor and FDS lazy-load as file-local state (see mode_authtrace.c
- * m_st for the pattern), same as app_standalone_get_result_avail() already
- * relies on via find_mode() for GET_SIZES. */
+ * regardless of which mode (if any) is currently armed. Each mode's
+ * read_result()/clear_result() keeps its own read cursor and FDS lazy-load as
+ * file-local state (see mode_authtrace.c m_st for the pattern), same as
+ * app_standalone_get_result_avail() already relies on via find_mode() for
+ * GET_SIZES.
+ *
+ * Caveat: the trace modes share ONE RAM buffer (see trace_buf.h), so reading
+ * a mode that is not the armed one overwrites that buffer with the other
+ * mode's record. The armed mode re-reads its own record when it is armed
+ * again, but it must not append to its cached copy before that reload. */
 standalone_rc_t app_standalone_read_result_mode(standalone_mode_t mode,
         uint8_t *out, size_t out_max, size_t *out_len) {
     if (out == NULL || out_len == NULL) return STANDALONE_RC_INVALID_CFG;
@@ -580,8 +585,9 @@ size_t app_standalone_get_result_avail(standalone_mode_t mode) {
     const standalone_mode_iface_t *m = find_mode(mode);
     if (m == NULL || m->get_result_size == NULL) return 0;
     /* Trigger lazy-load from FDS into the mode's RAM buffer if not already
-     * done.  Each mode has its own static buffer so multiple modes can be
-     * loaded simultaneously without conflict. */
+     * done.  The trace modes share ONE RAM buffer (see trace_buf.h), so only
+     * one mode is armed at a time and every mode re-reads its own record
+     * from flash when it is armed. */
     if (m->ensure_loaded != NULL) m->ensure_loaded();
     return m->get_result_size();
 }

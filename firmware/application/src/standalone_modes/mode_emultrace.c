@@ -152,11 +152,16 @@ static bool commit_session(uint8_t status) {
 
 /* -------------------------------------------------------------------------
  * Lazy FDS load
+ *
+ * The result buffer is shared with the other trace modes (see trace_buf.h),
+ * so the reload must start from a clean cursor: the buffer may still hold
+ * another mode's bytes.
  * ------------------------------------------------------------------------- */
 
 static void ensure_result_loaded(void) {
     if (m_st.result_loaded) return;
     m_st.result_loaded = true;
+    buffer_reset();
 
     size_t loaded = 0;
     if (app_standalone_load_result_buf(STANDALONE_MODE_EMUL_TRACE,
@@ -222,6 +227,10 @@ static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len) {
     accum_reset();
     m_session_cut  = 0;
     m_st.active    = true;
+    /* The result buffer is shared with the other trace modes, so it may
+     * still hold another mode's bytes: clear the loaded flag to force a
+     * reload of OUR record. */
+    m_st.result_loaded = false;
     ensure_result_loaded();
     tag_emulation_load_data();
     nfc_tag_14a_set_sniff_cb(emultrace_rx_cb);

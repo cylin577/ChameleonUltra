@@ -229,6 +229,10 @@ static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len) {
     if (!nc_cfg_parse(cfg, cfg_len, &m_st.cfg)) {
         NRF_LOG_WARNING("canary: bad cfg, using defaults");
     }
+    /* The log buffer is shared with the other trace modes (see trace_buf.h),
+     * so it may still hold another mode's bytes: clear the loaded flag to
+     * force a reload of OUR record. */
+    m_st.loaded = false;
     log_ensure_loaded();
     m_st.epoch++;
     m_st.seq          = 0;

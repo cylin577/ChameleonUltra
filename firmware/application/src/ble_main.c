@@ -102,14 +102,22 @@ static uint16_t   m_conn_handle          = BLE_CONN_HANDLE_INVALID;             
 static uint16_t   m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - 3;            /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
 lf_adc_callback_t m_lf_adc_callback      = NULL;
 
+/* Advertising UUID lists. The FIDO service is only advertised when its
+ * GATT service was actually registered, so the list pointer and the count
+ * always describe the same list — no reliance on the array order. */
 static ble_uuid_t m_adv_uuids[]          =                                          /**< Universally unique service identifier. */
 {
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE},
     {BLE_UUID_BATTERY_SERVICE, BLE_UUID_TYPE_BLE},
-#if CONFIG_STANDALONE_U2F
-    {0xFFFD, BLE_UUID_TYPE_BLE},                    /**< FIDO GATT service (BLE FIDO2) */
-#endif
 };
+#if CONFIG_STANDALONE_U2F
+static ble_uuid_t m_adv_uuids_fido[]     =
+{
+    {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE},
+    {BLE_UUID_BATTERY_SERVICE, BLE_UUID_TYPE_BLE},
+    {0xFFFD, BLE_UUID_TYPE_BLE},                    /**< FIDO GATT service (BLE FIDO2) */
+};
+#endif
 volatile bool g_is_ble_connected = false;
 volatile bool g_is_low_battery_shutdown = false;
 static ble_opt_t m_static_pin_option;
@@ -630,15 +638,15 @@ static void advertising_init(void) {
     init.advdata.include_appearance = false;
     init.advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 
+    init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
     init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
 #if CONFIG_STANDALONE_U2F
-    /* The FIDO UUID is the last entry — do not advertise a service that
-     * could not be registered. */
-    if (!ble_fido_svc_available()) {
-        init.srdata.uuids_complete.uuid_cnt--;
+    /* Only advertise the FIDO UUID when the service was registered. */
+    if (ble_fido_svc_available()) {
+        init.srdata.uuids_complete.p_uuids  = m_adv_uuids_fido;
+        init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids_fido) / sizeof(m_adv_uuids_fido[0]);
     }
 #endif
-    init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
 
     init.config.ble_adv_fast_enabled  = true;
     init.config.ble_adv_fast_interval = APP_ADV_INTERVAL;

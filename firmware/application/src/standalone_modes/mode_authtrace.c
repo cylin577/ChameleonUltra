@@ -160,16 +160,20 @@ static void buffer_reset(void) {
     m_st.write_cursor  = 0;
     m_st.read_cursor   = 0;
     m_st.session_count = 0;
-    /* Keep result_loaded = true after a clear — we know the FDS state
-     * matches (empty), so no need to re-load on the next read. */
+    /* result_loaded is left alone: after a clear we know the FDS state
+     * matches (empty), and the loader sets it before calling us. */
 }
 
 /* Load the persisted result buffer from FDS if not already in RAM.
  * Called lazily from read_result() so GET_RESULT works even before
- * the mode has been armed (on_enter never called after a reboot). */
+ * the mode has been armed (on_enter never called after a reboot).
+ * The buffer is shared with the other trace modes (see trace_buf.h), so the
+ * reload must start from a clean cursor: the buffer may still hold another
+ * mode's bytes. */
 static void ensure_result_loaded(void) {
     if (m_st.result_loaded) return;
     m_st.result_loaded = true;
+    buffer_reset();
 
     size_t loaded = 0;
     standalone_rc_t rc = app_standalone_load_result_buf(
@@ -293,9 +297,12 @@ static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len) {
     m_st.state  = AT_IDLE;
     m_st.active = true;
 
-    /* Load any persisted sessions from flash (if not already in RAM from a
-     * prior GET_RESULT call since boot). Resets read_cursor so the host
-     * sees the full session list from the start on each new arm. */
+    /* Load any persisted sessions from flash. The result buffer is shared
+     * with the other trace modes, so it may still hold another mode's
+     * bytes: clear the loaded flag to force a reload of OUR record.
+     * Resets read_cursor so the host sees the full session list from the
+     * start on each new arm. */
+    m_st.result_loaded = false;
     ensure_result_loaded();
     m_st.read_cursor = 0;
 

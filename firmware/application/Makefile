@@ -45,6 +45,13 @@ CFLAGS += -DCONFIG_STANDALONE_U2F=$(STANDALONE_U2F)
 CFLAGS += -DCONFIG_GDB_GATEWAY_EXEC=$(GDB_GATEWAY_EXEC)
 CFLAGS += -DCONFIG_GDB_GATEWAY_PKT=$(GDB_GATEWAY_PKT)
 
+# Fatal APP_ERROR_CHECK calls must report the source file and line even in
+# the release build: outside DEBUG the SDK's APP_ERROR_HANDLER drops them
+# (app_error_handler_bare). Force-include our override into every
+# translation unit of this target — app_error.h's include guard keeps it in
+# place, and the GCC app_error_handler() it calls is compiled in below.
+CFLAGS += -include $(PROJ_DIR)/app_error_check.h
+
 # Source files common to all targets
 SRC_FILES += \
   $(SRC_COMMON)/hw_connect.c \
