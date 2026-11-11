@@ -48,6 +48,7 @@
 #include "tag_emulation.h"
 #include "utils/syssleep.h"
 #include "rfid/nfctag/hf/nfc_14a.h"
+#include "trace_buf.h"      /* shared result buffer (see trace_buf.h) */
 
 /* -------------------------------------------------------------------------
  * Constants
@@ -72,7 +73,9 @@ _Static_assert(CANARY_LOG_BYTES + 4 <= STANDALONE_RESULT_PERSIST_MAX,
  * region; never read directly from the main loop. */
 static nc_snapshot_t m_isr;
 
-static uint32_t m_log_words[(CANARY_LOG_BYTES + 3) / 4];
+_Static_assert(CANARY_LOG_BYTES <= STANDALONE_TRACE_BUF_BYTES,
+               "shared trace buffer too small for nfc_canary");
+static uint32_t *const m_log_words = standalone_trace_words;
 #define m_log ((uint8_t *)m_log_words)
 
 static struct {

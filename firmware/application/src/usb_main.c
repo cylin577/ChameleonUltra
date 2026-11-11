@@ -10,6 +10,7 @@
 #include "app_usbd_core.h"
 #include "app_usbd_serial_num.h"
 #include "app_usbd_string_desc.h"
+#include "nrf_strerror.h"
 #if CONFIG_STANDALONE_U2F
 #include "app_usbd_hid.h"
 #include "app_usbd_hid_generic.h"
@@ -226,13 +227,19 @@ void usb_cdc_init(void) {
     APP_ERROR_CHECK(ret);
 
 #if CONFIG_STANDALONE_U2F
-    /* FIDO2 CTAPHID class (USB interface 2). */
+    /* FIDO2 CTAPHID class (USB interface 2). The USB transport is optional:
+     * if the class cannot be attached (e.g. no free endpoints) the device
+     * must still boot — only the USB FIDO transport is lost. */
     m_app_hid_generic_in.p_buff = m_hid_in_buf;
     m_app_hid_generic_in.size = sizeof(m_hid_in_buf);
     app_usbd_class_inst_t const *class_hid = app_usbd_hid_generic_class_inst_get(&m_app_hid_generic);
     ret = app_usbd_class_append(class_hid);
-    APP_ERROR_CHECK(ret);
-    fido2_hid_set_sender(hid_fido_send);
+    if (ret != NRF_SUCCESS) {
+        NRF_LOG_ERROR("FIDO HID class not attached: %s", nrf_strerror_get(ret));
+        fido2_hid_set_sender(NULL);       /* no USB FIDO transport */
+    } else {
+        fido2_hid_set_sender(hid_fido_send);
+    }
 #endif
 }
 

@@ -50,6 +50,7 @@ SRC_FILES += \
   $(SRC_COMMON)/hw_connect.c \
   $(SRC_COMMON)/libc_nano_stubs.c \
   $(PROJ_DIR)/heap_guard.c \
+  $(PROJ_DIR)/app_error_handler.c \
   $(PROJ_DIR)/app_main.c \
   $(PROJ_DIR)/app_cmd.c \
   $(PROJ_DIR)/logic_analyzer.c \
@@ -250,6 +251,11 @@ endif
 ifeq ($(strip $(STANDALONE_NFC_CANARY)),1)
 SRC_FILES += $(PROJ_DIR)/standalone_modes/nfc_canary_core.c
 SRC_FILES += $(PROJ_DIR)/standalone_modes/mode_nfc_canary.c
+endif
+# The trace modes share one result buffer — include it if any of them is
+# enabled (same pattern as mf1_dict.c below).
+ifneq (,$(filter 1,$(strip $(STANDALONE_AUTHTRACE)) $(strip $(STANDALONE_EMUL_TRACE)) $(strip $(STANDALONE_HF14A_TAP_SNIFF)) $(strip $(STANDALONE_NFC_CANARY))))
+SRC_FILES += $(PROJ_DIR)/standalone_modes/trace_buf.c
 endif
 ifeq ($(strip $(STANDALONE_AUTOCLONE)),1)
 SRC_FILES += $(PROJ_DIR)/standalone_modes/mode_autoclone.c

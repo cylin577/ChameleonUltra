@@ -16,6 +16,10 @@ codec, the crypto and a single request slot. The CTAP1 (U2F) path shares the
 core's master key and sign counter, so the counter never repeats across the two
 protocol versions.
 
+A transport that cannot be registered is switched off automatically: if the
+SoftDevice or the FIDO GATT service fails to come up, the firmware keeps
+running and the mode offers only the transports that really work.
+
 > **Verification status:** this implementation is covered by host unit tests
 > and compile-only firmware builds. No ChameleonUltra hardware was available in
 > this checkout, so USB CTAPHID, BLE FIDO GATT and NFC CTAP2 interoperability,

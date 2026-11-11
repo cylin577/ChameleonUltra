@@ -88,6 +88,13 @@ void fido2_hid_set_sender(fido2_hid_send_fn fn)
     m_sender = fn;
 }
 
+bool fido2_hid_available(void)
+{
+    /* The sink is only registered once the USB HID class was attached, so a
+     * registered sink is exactly "the USB transport is usable". */
+    return m_sender != NULL;
+}
+
 /* Build the next answer packet into the free IN buffer. */
 static void hid_build_packet(void)
 {

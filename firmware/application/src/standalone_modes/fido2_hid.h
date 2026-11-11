@@ -58,8 +58,12 @@ typedef bool (*fido2_hid_send_fn)(const uint8_t *pkt, size_t len);
 /* Reset the protocol state (channel id, pending transfers). */
 void fido2_hid_init(void);
 
-/* Register the USB sink. */
+/* Register the USB sink. The USB FIDO transport is only usable while a sink
+ * is registered — it is only set once the HID class was attached. */
 void fido2_hid_set_sender(fido2_hid_send_fn fn);
+
+/* True when the USB transport can be offered to the FIDO core. */
+bool fido2_hid_available(void);
 
 /* Main-loop pump: picks up a finished CTAP2 answer and pushes IN packets. */
 void fido2_hid_poll(void);

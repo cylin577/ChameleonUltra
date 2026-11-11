@@ -59,6 +59,7 @@
 #include "rfid_main.h"      /* reader_mode_enter, get_device_mode, etc. */
 #include "bsp_delay.h"
 #include "app_cmd.h"        /* hf14a_auth_trace_run, hf14a_auth_trace_get_buf */
+#include "trace_buf.h"      /* shared result buffer (see trace_buf.h) */
 
 #define CFG_VERSION              1
 
@@ -90,10 +91,13 @@ typedef enum {
     AT_SCANNING,
 } at_state_t;
 
-/* Result buffer — top-level word-aligned static so it can be passed directly
- * to app_standalone_save_result_buf() without a second staging copy.
+/* Result buffer — shared with the other trace modes (only one standalone mode
+ * is armed at a time) and word-aligned, so it can be passed directly to
+ * app_standalone_save_result_buf() without a second staging copy.
  * uint32_t[] guarantees 4-byte BSS alignment required by fds_write_sync. */
-static uint32_t m_result_words[(RESULT_BUFFER_BYTES + 3) / 4];
+_Static_assert(RESULT_BUFFER_BYTES <= STANDALONE_TRACE_BUF_BYTES,
+               "shared trace buffer too small for authtrace");
+static uint32_t *const m_result_words = standalone_trace_words;
 #define m_result_buf ((uint8_t *)m_result_words)
 
 static struct {

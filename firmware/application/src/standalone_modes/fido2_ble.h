@@ -51,8 +51,12 @@ extern "C" {
 #define FIDO_BLE_MAX_MESSAGE   512
 #define FIDO_BLE_MIN_MTU       23
 
-/* Register the FIDO GATT service (call once, at BLE service init). */
+/* Register the FIDO GATT service (call once, at BLE service init).
+ * Returns NRF_SUCCESS only when the service is completely registered. */
 uint32_t ble_fido_svc_init(void);
+
+/* True when the FIDO GATT service is registered and usable. */
+bool ble_fido_svc_available(void);
 
 /* Reset the transport state (called when the u2f mode is armed). */
 void fido2_ble_reset(void);

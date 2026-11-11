@@ -11,6 +11,7 @@
 #include "nrf_sdh_ble.h"
 #include "nrf_ble_gatt.h"
 #include "nrf_ble_lesc.h"
+#include "nrf_strerror.h"
 
 #include "peer_manager.h"
 #include "peer_manager_handler.h"
@@ -112,6 +113,10 @@ static ble_uuid_t m_adv_uuids[]          =                                      
 volatile bool g_is_ble_connected = false;
 volatile bool g_is_low_battery_shutdown = false;
 static ble_opt_t m_static_pin_option;
+/* False when the SoftDevice BLE stack could not be enabled. Every BLE-only
+ * call below is skipped in that case — an unusable radio must never take the
+ * whole device down. */
+static bool m_ble_enabled = false;
 
 // Simple function to provide an index to the next input buffer
 // Will simply alernate between 0 and 1 when SAADC_BUF_COUNT is 2
@@ -128,6 +133,7 @@ static uint32_t next_free_buf_index(void) {
  */
 void set_ble_connect_key(uint8_t *key) {
     static uint8_t passkey[BLE_PAIRING_KEY_LEN];
+    if (!m_ble_enabled) return;
     memcpy(passkey, key, BLE_PAIRING_KEY_LEN);
     m_static_pin_option.gap_opt.passkey.p_passkey = passkey;
     // NRF_LOG_RAW_HEXDUMP_INFO(passkey, 6);
@@ -143,6 +149,8 @@ void set_ble_connect_key(uint8_t *key) {
 void ble_update_device_name(void) {
     ble_gap_conn_sec_mode_t sec_mode;
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&sec_mode);
+
+    if (!m_ble_enabled) return;
 
     const char *custom_name = settings_get_ble_name();
     const char *name_to_use = (custom_name[0] != '\0') ? custom_name : DEVICE_NAME_STR;
@@ -359,9 +367,14 @@ static void services_init(void) {
     APP_ERROR_CHECK(err_code);
 
 #if CONFIG_STANDALONE_U2F
-    // FIDO GATT service (BLE FIDO2 transport for the u2f standalone mode)
+    // FIDO GATT service (BLE FIDO2 transport for the u2f standalone mode).
+    // Optional: a failure here (e.g. an attribute table that is too small)
+    // must never take the device down. The BLE FIDO transport is then simply
+    // not offered.
     err_code = ble_fido_svc_init();
-    APP_ERROR_CHECK(err_code);
+    if (err_code != NRF_SUCCESS) {
+        NRF_LOG_ERROR("FIDO GATT service unavailable: %s", nrf_strerror_get(err_code));
+    }
 #endif
 }
 
@@ -541,8 +554,10 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context) {
 /**@brief Function for the SoftDevice initialization.
  *
  * @details This function initializes the SoftDevice and the BLE event interrupt.
+ *
+ * @return true when the BLE stack is up and usable.
  */
-static void ble_stack_init(void) {
+static bool ble_stack_init(void) {
     ret_code_t err_code;
 
     err_code = nrf_sdh_enable_request();
@@ -562,12 +577,21 @@ static void ble_stack_init(void) {
      * override raised the SoftDevice RAM requirement above the linker-reserved
      * region and prevented boot, so it is intentionally omitted. */
 
-    // Enable BLE stack.
+    // Enable BLE stack. A failure here is not fatal: the SoftDevice did not
+    // get enough RAM (see the linker script) or the configuration is refused.
+    // The device keeps working without a radio instead of resetting forever.
+    uint32_t const app_ram_base_link = ram_start;
     err_code = nrf_sdh_ble_enable(&ram_start);
-    APP_ERROR_CHECK(err_code);
+    if (err_code != NRF_SUCCESS) {
+        NRF_LOG_ERROR("BLE disabled: %s (app RAM base 0x%08x, SoftDevice wants 0x%08x)",
+                      nrf_strerror_get(err_code), app_ram_base_link, ram_start);
+        return false;
+    }
 
     // Register a handler for BLE events.
     NRF_SDH_BLE_OBSERVER(m_ble_observer, APP_BLE_OBSERVER_PRIO, ble_evt_handler, NULL);
+    m_ble_enabled = true;
+    return true;
 }
 
 /**@brief Function for handling events from the GATT library. */
@@ -607,6 +631,13 @@ static void advertising_init(void) {
     init.advdata.flags              = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
 
     init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
+#if CONFIG_STANDALONE_U2F
+    /* The FIDO UUID is the last entry — do not advertise a service that
+     * could not be registered. */
+    if (!ble_fido_svc_available()) {
+        init.srdata.uuids_complete.uuid_cnt--;
+    }
+#endif
     init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
 
     init.config.ble_adv_fast_enabled  = true;
@@ -624,6 +655,8 @@ static void advertising_init(void) {
  */
 void delete_bonds_all(void) {
     ret_code_t err_code;
+
+    if (!m_ble_enabled) return;
 
     NRF_LOG_INFO("Erase bonds!");
 
@@ -660,6 +693,7 @@ static uint8_t  s_relay_raw[255];   /* extended advertising data (was 31 legacy)
 static uint16_t s_relay_raw_len = 0;
 
 void ble_main_relay_adv_set(const uint8_t *raw_adv, uint8_t len) {
+    if (!m_ble_enabled) return;
     if (len > sizeof(s_relay_raw)) len = sizeof(s_relay_raw);
     s_relay_raw_len = len;
     if (len && raw_adv) memcpy(s_relay_raw, raw_adv, len);
@@ -729,6 +763,7 @@ void ble_main_relay_adv_set(const uint8_t *raw_adv, uint8_t len) {
 
 /**@brief Relay mode: restore normal advertising. */
 void ble_main_relay_adv_restore(void) {
+    if (!m_ble_enabled) return;
     g_relay_adv_active = false;
     sd_ble_gap_adv_stop(m_advertising.adv_handle);
     ret_code_t ret = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
@@ -740,6 +775,7 @@ void ble_main_relay_adv_restore(void) {
 /**@brief Function for starting advertising.
  */
 void advertising_start(bool erase_bonds) {
+    if (!m_ble_enabled) return;
     if (erase_bonds == true && settings_get_ble_pairing_enable_first_load()) {
         // Advertising is started by PM_EVT_PEERS_DELETE_SUCCEEDED event.
         // So we don't call `ble_advertising_start()` after `delete_bonds_all()`.
@@ -757,6 +793,7 @@ void advertising_start(bool erase_bonds) {
  * @brief Function for stop advertising.
  */
 void advertising_stop(void) {
+    if (!m_ble_enabled) return;
     sd_ble_gap_adv_stop(m_advertising.adv_handle);
 }
 
@@ -886,14 +923,16 @@ static void battery_level_meas_timeout_handler(void *p_context) {
     percentage_batt_lvl = BATVOL2PERCENT(batt_lvl_in_milli_volts);
 
     // if battery service is notification enable, we can send msg to device.
-    err_code = ble_bas_battery_level_update(&m_bas, percentage_batt_lvl, BLE_CONN_HANDLE_ALL);
-    if ((err_code != NRF_SUCCESS) &&
-            (err_code != NRF_ERROR_INVALID_STATE) &&
-            (err_code != NRF_ERROR_RESOURCES) &&
-            (err_code != NRF_ERROR_BUSY) &&
-            (err_code != NRF_ERROR_FORBIDDEN) &&
-            (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)) {
-        APP_ERROR_HANDLER(err_code);
+    if (m_ble_enabled) {
+        err_code = ble_bas_battery_level_update(&m_bas, percentage_batt_lvl, BLE_CONN_HANDLE_ALL);
+        if ((err_code != NRF_SUCCESS) &&
+                (err_code != NRF_ERROR_INVALID_STATE) &&
+                (err_code != NRF_ERROR_RESOURCES) &&
+                (err_code != NRF_ERROR_BUSY) &&
+                (err_code != NRF_ERROR_FORBIDDEN) &&
+                (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)) {
+            APP_ERROR_HANDLER(err_code);
+        }
     }
 
     // check low battery level, if level == 0, we can try to shutdown.
@@ -922,7 +961,10 @@ void create_battery_timer(void) {
 void ble_slave_init(void) {
     adc_configure();                    // ADC initialization
     create_battery_timer();             // Create a battery power update timer
-    ble_stack_init();                   // BLE protocol stack initialization
+    if (!ble_stack_init()) {            // BLE protocol stack initialization
+        NRF_LOG_ERROR("BLE stack unavailable — continuing without a radio");
+        return;
+    }
     gap_params_init();                  // GAP parameter initialization
     gatt_init();                        // Gatt protocol initialization
     services_init();                    // Initialization of service characteristics

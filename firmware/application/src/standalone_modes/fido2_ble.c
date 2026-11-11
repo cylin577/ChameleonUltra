@@ -54,6 +54,7 @@ NRF_LOG_MODULE_REGISTER();
 /* ---- module state ---- */
 static uint16_t m_svc_handle;
 static uint8_t  m_uuid_type;             /* vendor-specific UUID type */
+static bool     m_svc_ready = false;     /* service registered completely */
 
 static ble_gatts_char_handles_t m_ctrl_point_handles;
 static ble_gatts_char_handles_t m_status_handles;
@@ -372,6 +373,9 @@ uint32_t ble_fido_svc_init(void)
     ble_uuid128_t base_uuid = { .uuid128 = FIDO_BLE_BASE_UUID_BYTES };
     ble_add_char_params_t add_char_params;
 
+    /* Nothing is usable until every attribute has been added. */
+    m_svc_ready = false;
+
     /* One vendor-specific UUID type covers FFF1..FFF4. */
     err = sd_ble_uuid_vs_add(&base_uuid, &m_uuid_type);
     if (err != NRF_SUCCESS) return err;
@@ -454,7 +458,13 @@ uint32_t ble_fido_svc_init(void)
     if (err != NRF_SUCCESS) return err;
 
     NRF_LOG_INFO("fido2 ble service ready");
+    m_svc_ready = true;
     return NRF_SUCCESS;
+}
+
+bool ble_fido_svc_available(void)
+{
+    return m_svc_ready;
 }
 
 void fido2_ble_reset(void)

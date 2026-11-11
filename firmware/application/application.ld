@@ -6,7 +6,13 @@ GROUP(-lgcc -lc -lnosys)
 MEMORY
 {
   FLASH (rx) : ORIGIN = 0x27000, LENGTH = 0x89000
-  RAM (rwx) :  ORIGIN = 0x20002be8, LENGTH = 0x35418
+  /* The SoftDevice owns everything below the application RAM start
+   * (see sd_ble_enable: "The SoftDevice RAM region is located between
+   * 0x20000000 and APP_RAM_BASE-1"). The GATT attribute table grew from
+   * 1408 to 3072 bytes, so the SoftDevice needs ~1.6 KB more RAM below
+   * APP_RAM_BASE -- hence the raised start. The end address must stay at
+   * 0x20038000: the NOINIT region starts there. */
+  RAM (rwx) :  ORIGIN = 0x20003400, LENGTH = 0x34C00
 }
 
 SECTIONS

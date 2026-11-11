@@ -35,6 +35,7 @@
 #include "rfid/nfctag/hf/nfc_14a.h"
 #include "tag_emulation.h"
 #include "app_timer.h"
+#include "trace_buf.h"      /* shared result buffer (see trace_buf.h) */
 
 /* -------------------------------------------------------------------------
  * Constants
@@ -66,7 +67,11 @@
  * Result buffer — word-aligned for direct FDS writes
  * ------------------------------------------------------------------------- */
 
-static uint32_t m_result_words[(RESULT_BUFFER_BYTES + 3) / 4];
+/* Result buffer — word-aligned for direct FDS writes. Shared with the other
+ * trace modes (only one standalone mode is armed at a time). */
+_Static_assert(RESULT_BUFFER_BYTES <= STANDALONE_TRACE_BUF_BYTES,
+               "shared trace buffer too small for emultrace");
+static uint32_t *const m_result_words = standalone_trace_words;
 #define m_result_buf ((uint8_t *)m_result_words)
 
 /* Current-session accumulator */

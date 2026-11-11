@@ -473,7 +473,13 @@ static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len){
     m_clock_ticks = app_timer_cnt_get();
     m_clock_ms = 0;
     fido2_core_init(&m_core_io);
-    if (!fido2_core_arm(FIDO2_TRANSPORT_NFC | FIDO2_TRANSPORT_USB | FIDO2_TRANSPORT_BLE)) {
+    /* Only offer the transports that are really there: NFC always works, USB
+     * needs the HID class and BLE needs the FIDO GATT service. A transport
+     * that failed to register is left out instead of being advertised. */
+    uint8_t transports = FIDO2_TRANSPORT_NFC;
+    if (fido2_hid_available()) transports |= FIDO2_TRANSPORT_USB;
+    if (ble_fido_svc_available()) transports |= FIDO2_TRANSPORT_BLE;
+    if (!fido2_core_arm(transports)) {
         NRF_LOG_ERROR("u2f: core arm failed");
         return STANDALONE_RC_INVALID_STATE;
     }
