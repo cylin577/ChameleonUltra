@@ -155,11 +155,13 @@ static bool commit_session(uint8_t status) {
  *
  * The result buffer is shared with the other trace modes (see trace_buf.h),
  * so the reload must start from a clean cursor: the buffer may still hold
- * another mode's bytes.
+ * another mode's bytes. The same sharing means another mode may have loaded
+ * its record in the meantime — then our cached copy is gone and we reload.
  * ------------------------------------------------------------------------- */
 
 static void ensure_result_loaded(void) {
-    if (m_st.result_loaded) return;
+    if (m_st.result_loaded &&
+            app_standalone_result_buf_owner() == STANDALONE_MODE_EMUL_TRACE) return;
     m_st.result_loaded = true;
     buffer_reset();
 

@@ -225,6 +225,12 @@ standalone_rc_t app_standalone_load_result_buf(standalone_mode_t mode,
 size_t app_standalone_get_result_avail(standalone_mode_t mode);
 size_t app_standalone_get_stored_size(standalone_mode_t mode);
 
+/* The mode that loaded a result record into RAM last. The trace modes share
+ * ONE result buffer (standalone_modes/trace_buf.h), so a mode must reload
+ * its own record when it no longer owns the buffer — otherwise it serves
+ * the other mode's bytes as its own. */
+standalone_mode_t app_standalone_result_buf_owner(void);
+
 /* Returns true if event was consumed; false to let normal button cfg handle it. */
 bool                app_standalone_on_button(standalone_button_evt_t evt);
 

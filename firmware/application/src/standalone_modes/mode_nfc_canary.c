@@ -131,8 +131,13 @@ static uint32_t seconds_since_arm(uint32_t now_ticks) {
  * Log
  * ------------------------------------------------------------------------- */
 
+/* Load the persisted log from FDS if not already in RAM.
+ * The log buffer is shared with the other trace modes (see trace_buf.h), so
+ * another mode may have loaded its record in the meantime — then our cached
+ * copy is gone and we reload our own. */
 static void log_ensure_loaded(void) {
-    if (m_st.loaded) return;
+    if (m_st.loaded &&
+            app_standalone_result_buf_owner() == STANDALONE_MODE_NFC_CANARY) return;
     m_st.loaded = true;
 
     size_t n = 0;
@@ -351,7 +356,9 @@ static standalone_rc_t read_result(uint8_t *out, size_t out_max, size_t *out_len
 }
 
 static void clear_result(void) {
-    log_ensure_loaded();
+    /* No load: clearing never needs the data, and loading would pull this
+     * mode's record into the shared buffer (see trace_buf.h) — overwriting
+     * another mode's live capture when one is armed. */
     m_st.used        = 0;
     m_st.read_cursor = 0;
     m_st.dirty       = true;

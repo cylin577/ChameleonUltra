@@ -318,7 +318,11 @@ wire("fetchFor", $("availResult"), async () => {
   const mode = Number($("availSel").value);
   const raw = [];
   for(let i=0;i<200;i++){
-    const f = okOrThrow(await request(CU.STANDALONE_GET_RESULT_FOR, [mode]));
+    const f = await request(CU.STANDALONE_GET_RESULT_FOR, [mode]);
+    // 0x66 = DEVICE_MODE_ERROR: another standalone mode is armed and owns
+    // the shared result buffer — reading another mode would corrupt it.
+    if(f.status === 0x66) throw new Error("another standalone mode is armed — disarm it first");
+    okOrThrow(f);
     const chunk = f.data.slice(4);
     if(!chunk.length) break;
     raw.push(...chunk);

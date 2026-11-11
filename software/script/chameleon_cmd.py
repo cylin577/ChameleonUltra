@@ -2664,11 +2664,20 @@ class ChameleonCMD:
         repeatedly until the returned chunk is empty. Each mode keeps its
         own cursor, so this doesn't disturb any other mode's.
 
+        The firmware refuses the read (STATUS_DEVICE_MODE_ERROR) while a
+        different standalone mode is armed: the trace modes share one RAM
+        buffer and loading another mode's record would corrupt the armed
+        mode's live capture.
+
         Returns tuple (total_size: int, chunk: bytes).
         """
         resp = self.device.send_cmd_sync(Command.STANDALONE_GET_RESULT_FOR,
                                          bytes([int(mode)]), timeout=5)
         if resp.status != Status.SUCCESS:
+            if resp.status == Status.DEVICE_MODE_ERROR:
+                raise UnexpectedResponseError(
+                    "STANDALONE_GET_RESULT_FOR failed: another standalone mode is "
+                    "armed — disarm it first (the trace modes share one result buffer)")
             raise UnexpectedResponseError(
                 f"STANDALONE_GET_RESULT_FOR failed: status={resp.status}"
             )

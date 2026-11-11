@@ -337,7 +337,7 @@ static size_t ctap_status(uint8_t *out, uint8_t status) {
  * armed transport mask:
  *   {1:["FIDO_2_0","U2F_V2"], 3:h'<16 zero bytes aaguid>',
  *    4:{"rk":false,"up":true,"clientPin":false,"makeCredUvNotRqd":true},
- *    9:["usb","nfc","ble"]}
+ *    9:["usb"|"nfc"|"ble" — only the transports in the armed mask]}
  * "none" attestation => the AAGUID is all zeros. */
 static size_t ctap_get_info(uint8_t *out, size_t out_max) {
     if (out_max < 2) return ctap_status(out, FIDO2_ERR_INVALID_LENGTH);

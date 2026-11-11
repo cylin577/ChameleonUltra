@@ -101,6 +101,12 @@ static struct {
  * so the command ack is sent before that flash write, not after it. */
 static volatile bool m_disarm_pending = false;
 
+/* The mode whose result record was loaded into RAM last. The trace modes
+ * share ONE result buffer (see trace_buf.h), so a mode whose cached copy
+ * was taken over by another mode has to reload its own record before it
+ * serves it — otherwise it hands out the other mode's bytes as its own. */
+static standalone_mode_t m_result_buf_owner = STANDALONE_MODE_DISABLED;
+
 /* -------------------------------------------------------------------------
  * Mode registry
  * ------------------------------------------------------------------------- */
@@ -160,6 +166,13 @@ bool app_standalone_mode_available(standalone_mode_t id) {
 static const standalone_mode_iface_t *active_mode(void) {
     if (m_ctx.mode == STANDALONE_MODE_DISABLED) return NULL;
     return find_mode(m_ctx.mode);
+}
+
+/* True while `id` is the armed mode (the framework is out of DISARMED).
+ * The armed mode owns the shared result buffer: it may be appending to it
+ * live, so no other mode may load into it. */
+static bool mode_is_armed(standalone_mode_t id) {
+    return m_ctx.state != STANDALONE_STATE_DISARMED && m_ctx.mode == id;
 }
 
 /* -------------------------------------------------------------------------
@@ -306,6 +319,11 @@ standalone_rc_t app_standalone_load_result_buf(standalone_mode_t mode,
     if (mode >= STANDALONE_MODE__COUNT) return STANDALONE_RC_INVALID_CFG;
     if (buf_words == NULL || out_byte_len == NULL) return STANDALONE_RC_INVALID_CFG;
 
+    /* From now on this mode owns the RAM buffer it is about to fill: a
+     * mode that loaded earlier has lost its copy and must reload before
+     * serving it (the trace modes share one buffer, see trace_buf.h). */
+    m_result_buf_owner = mode;
+
     uint16_t len = (uint16_t)sizeof(m_result_save_buf);
     bool ok = fds_read_sync(FDS_STANDALONE_FILE_ID,
                             FDS_KEY_STANDALONE_RESULT_BASE + (uint16_t)mode,
@@ -336,6 +354,13 @@ standalone_rc_t app_standalone_load_result_buf(standalone_mode_t mode,
     *out_byte_len = data_len;
     NRF_LOG_DEBUG("standalone: loaded %u result bytes for mode %u", data_len, mode);
     return STANDALONE_RC_OK;
+}
+
+/* The mode that loaded a result record into RAM last. The trace modes share
+ * ONE result buffer (see trace_buf.h), so a mode uses this to notice that
+ * its cached copy was taken over and has to reload its own record. */
+standalone_mode_t app_standalone_result_buf_owner(void) {
+    return m_result_buf_owner;
 }
 
 /* -------------------------------------------------------------------------
@@ -542,10 +567,16 @@ standalone_rc_t app_standalone_clear_result(void) {
  * app_standalone_get_result_avail() already relies on via find_mode() for
  * GET_SIZES.
  *
- * Caveat: the trace modes share ONE RAM buffer (see trace_buf.h), so reading
- * a mode that is not the armed one overwrites that buffer with the other
- * mode's record. The armed mode re-reads its own record when it is armed
- * again, but it must not append to its cached copy before that reload. */
+ * The trace modes share ONE RAM buffer (see trace_buf.h), so the buffer can
+ * belong to only ONE mode at a time:
+ *   - While a mode is armed it owns the buffer (it may be appending to it
+ *     live), so a read for any other mode is refused with INVALID_STATE
+ *     instead of loading that mode's record over the live capture.
+ *   - When nothing is armed, the mode being read loads its record into the
+ *     buffer and becomes its owner (app_standalone_result_buf_owner()); a
+ *     mode that no longer owns the buffer reloads its own record before it
+ *     serves it, so it never hands out another mode's bytes.
+ */
 standalone_rc_t app_standalone_read_result_mode(standalone_mode_t mode,
         uint8_t *out, size_t out_max, size_t *out_len) {
     if (out == NULL || out_len == NULL) return STANDALONE_RC_INVALID_CFG;
@@ -555,6 +586,15 @@ standalone_rc_t app_standalone_read_result_mode(standalone_mode_t mode,
         *out_len = 0;
         return STANDALONE_RC_NO_RESULT;
     }
+
+    /* The armed mode owns the shared result buffer and may be appending to
+     * it live: loading another mode's record over it would make the armed
+     * mode persist the mix as its own capture. Refuse instead. */
+    if (m_ctx.state != STANDALONE_STATE_DISARMED && mode != m_ctx.mode) {
+        *out_len = 0;
+        return STANDALONE_RC_INVALID_STATE;
+    }
+
     return m->read_result(out, out_max, out_len);
 }
 
@@ -567,16 +607,24 @@ standalone_rc_t app_standalone_clear_result_mode(standalone_mode_t mode) {
 
 size_t app_standalone_get_stored_size(standalone_mode_t mode) {
     if (mode >= STANDALONE_MODE__COUNT) return 0;
-    uint32_t hdr = 0;
-    uint16_t len = 4;
-    bool ok = fds_read_sync(FDS_STANDALONE_FILE_ID,
-                            FDS_KEY_STANDALONE_RESULT_BASE + (uint16_t)mode,
-                            &len, (uint8_t *)&hdr);
-    if (!ok || len < 4) return 0;
-    size_t byte_len = (size_t)((hdr >>  0) & 0xFF)
-                      | (size_t)((hdr >>  8) & 0xFF) << 8
-                      | (size_t)((hdr >> 16) & 0xFF) << 16
-                      | (size_t)((hdr >> 24) & 0xFF) << 24;
+    /* The record holds [u32 byte_len][data], so its flash length is always
+     * bigger than the 4-byte header: fds_read_sync() would refuse it
+     * ("buffer too small"). fds_peek() hands out a pointer to the record
+     * without copying it, so the header can be read in place. */
+    uint16_t           len  = 0;
+    fds_record_desc_t  desc;
+    const uint8_t     *data = fds_peek(FDS_STANDALONE_FILE_ID,
+                                       FDS_KEY_STANDALONE_RESULT_BASE + (uint16_t)mode,
+                                       &len, &desc);
+    if (data == NULL) return 0;
+    size_t byte_len = 0;
+    if (len >= 4) {
+        byte_len = (size_t)data[0]
+                 | (size_t)data[1] << 8
+                 | (size_t)data[2] << 16
+                 | (size_t)data[3] << 24;
+    }
+    fds_peek_close(&desc);
     return byte_len;
 }
 
@@ -584,11 +632,16 @@ size_t app_standalone_get_result_avail(standalone_mode_t mode) {
     if (mode >= STANDALONE_MODE__COUNT) return 0;
     const standalone_mode_iface_t *m = find_mode(mode);
     if (m == NULL || m->get_result_size == NULL) return 0;
-    /* Trigger lazy-load from FDS into the mode's RAM buffer if not already
-     * done.  The trace modes share ONE RAM buffer (see trace_buf.h), so only
-     * one mode is armed at a time and every mode re-reads its own record
-     * from flash when it is armed. */
-    if (m->ensure_loaded != NULL) m->ensure_loaded();
+    if (m->ensure_loaded != NULL) {
+        /* Modes with a persisted result pull it into RAM on demand. The
+         * trace modes share ONE RAM buffer (see trace_buf.h), so only the
+         * ARMED mode may load into it: another mode's load would overwrite
+         * the armed mode's live capture, which the armed mode would then
+         * append to and persist as its own. Every other mode reports the
+         * size stored in flash instead. */
+        if (!mode_is_armed(mode)) return app_standalone_get_stored_size(mode);
+        m->ensure_loaded();
+    }
     return m->get_result_size();
 }
 

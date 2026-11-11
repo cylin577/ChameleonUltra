@@ -717,6 +717,7 @@ firmware/standalone_modes.mk
 firmware/application/src/tests/test_app_button_tap
 firmware/application/src/tests/test_app_button_edge
 firmware/application/src/tests/test_app_button_tap_path
+firmware/application/src/tests/test_standalone_result_gate
 firmware/application/src/rfid/nfctag/lf/tests/test_fdxb_modulator
 firmware/application/src/standalone_modes/tests/test_nfc_canary_core
 firmware/application/src/standalone_modes/tests/test_fido2_core
