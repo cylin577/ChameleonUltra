@@ -577,8 +577,28 @@ static standalone_rc_t on_tick(uint32_t now_ms){
      *   yellow = processing
      *   green  = success (1 s)
      *   red    = error (1 s) */
-    static uint8_t m_led_state = 0;   /* 0=idle,1=up,2=proc,3=done */
+    static uint8_t m_led_state = 0;   /* 0=idle,1=up,2=proc,3=done,4=err */
     static uint16_t m_led_timer = 0;  /* ticks remaining for done state */
+    static uint8_t m_breath_phase = 0;
+
+    if (m_led_state == 3) {
+        /* Green breathing wave. */
+        uint32_t *leds = hw_get_led_array();
+        set_slot_light_color(RGB_GREEN);
+        if (m_breath_phase < 8) {
+            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+                if (i <= m_breath_phase) nrf_gpio_pin_clear(leds[i]);
+                else                      nrf_gpio_pin_set(leds[i]);
+            }
+        } else {
+            uint8_t off = m_breath_phase - 8;
+            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+                if (i <= off) nrf_gpio_pin_set(leds[i]);
+                else           nrf_gpio_pin_clear(leds[i]);
+            }
+        }
+        if (++m_breath_phase >= 16) m_breath_phase = 0;
+    }
 
     if (m_led_timer > 0) {
         m_led_timer--;
@@ -586,6 +606,7 @@ static standalone_rc_t on_tick(uint32_t now_ms){
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
             standalone_led_solid();
             m_led_state = 0;
+            m_breath_phase = 0;
         }
     }
 
@@ -593,13 +614,15 @@ static standalone_rc_t on_tick(uint32_t now_ms){
     if (was_pending && response_ready) {
         /* Completed this tick. */
         if (fido2_last_response_status() == 0x00) {
-            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_GREEN);
+            m_led_state = 3;          /* green breathing */
+            m_led_timer = 200;         /* 1 s at 5 ms/tick */
+            m_breath_phase = 0;
         } else {
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_RED);
+            standalone_led_solid();
+            m_led_state = 4;          /* red solid */
+            m_led_timer = 200;         /* 1 s at 5 ms/tick */
         }
-        standalone_led_solid();
-        m_led_state = 3;
-        m_led_timer = 200;   /* 1 s at 5 ms/tick */
     } else if (was_pending) {
         /* Still processing. */
         if (m_led_state != 2) {
