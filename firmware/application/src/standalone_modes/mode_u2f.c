@@ -587,11 +587,24 @@ static standalone_rc_t on_tick(uint32_t now_ms){
             m_up_led_active = true;
             m_proc_led_active = false;
         }
-    } else if (m_up_led_active || m_proc_led_active) {
+    } else if (m_proc_led_active) {
+        /* Processing finished: green for ~500 ms, then back to blue. */
+        static uint8_t m_done_count = 0;
+        if (m_done_count == 0) {
+            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_GREEN);
+            standalone_led_solid();
+        }
+        if (++m_done_count >= 100) {   /* 100 ticks x 5 ms = 500 ms */
+            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
+            standalone_led_solid();
+            m_proc_led_active = false;
+            m_done_count = 0;
+        }
+    } else if (m_up_led_active) {
+        /* UP expired without processing: straight back to blue. */
         standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
         standalone_led_solid();
         m_up_led_active = false;
-        m_proc_led_active = false;
     }
     return STANDALONE_RC_OK;
 }
