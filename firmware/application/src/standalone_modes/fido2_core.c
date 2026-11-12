@@ -808,6 +808,15 @@ bool fido2_is_processing(void) {
     return s_state == FIDO2_ST_PROCESSING;
 }
 
+bool fido2_has_pending_request(void) {
+    return s_state == FIDO2_ST_PENDING || s_state == FIDO2_ST_WAITING_UP ||
+           s_state == FIDO2_ST_PROCESSING;
+}
+
+bool fido2_response_ready_any(void) {
+    return s_state == FIDO2_ST_DONE;
+}
+
 bool fido2_cancel(fido2_owner_t owner) {
     bool ok = false;
     FIDO2_CRIT_ENTER();
