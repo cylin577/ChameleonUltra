@@ -566,7 +566,7 @@ static standalone_rc_t on_tick(uint32_t now_ms){
     /* Capture state before tick to detect transitions. */
     bool was_pending = fido2_has_pending_request();
     fido2_tick();          /* run the queued CTAP2 command (crypto included) */
-    bool response_ready = fido2_response_ready_any();
+    bool response_ready = fido2_response_ready_any();   /* check BEFORE hid_poll resets state */
     fido2_hid_poll();      /* USB CTAPHID: emit the next response packet    */
     fido2_ble_poll();      /* BLE FIDO GATT: emit the next response fragment */
     nfc_poll();            /* NFC: CTAP2 answer / APDU processing           */
