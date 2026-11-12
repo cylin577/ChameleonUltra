@@ -98,6 +98,7 @@ bool     fido2_up_granted(void);
 bool     fido2_is_processing(void);
 bool     fido2_has_pending_request(void);
 bool     fido2_response_ready_any(void);
+uint8_t  fido2_last_response_status(void);
 
 /* Cancel the queued request for `owner`. The owner receives status
  * CTAP2_ERR_KEEPALIVE_CANCEL. */

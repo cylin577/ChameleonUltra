@@ -118,7 +118,6 @@ static uint8_t  m_ctap_resp[FIDO2_MAX_RESPONSE];
 static bool     m_ctap2_resp;
 /* A CTAP2 command was handed to the core; the answer is emitted later. */
 static bool     m_ctap2_pending;
-static uint8_t  m_last_ctap_status = 0xFF;   /* 0x00 = success */
 
 /* fixed anti-collision identity: ISO-14443-4 (SAK bit 0x20) + a minimal ATS */
 static nfc_tag_14a_uid_size s_uid_size = NFC_TAG_14A_UID_DOUBLE_SIZE;
@@ -525,7 +524,6 @@ static void nfc_poll(void){
         if (fido2_take_response(FIDO2_OWNER_NFC, m_ctap_resp, sizeof(m_ctap_resp), &rlen)) {
             if (rlen > sizeof(m_big) - 2) rlen = sizeof(m_big) - 2;
             memcpy(m_big, m_ctap_resp, rlen);
-            m_last_ctap_status = (rlen > 0) ? m_ctap_resp[0] : 0xFF;
             m_big_len = put_sw(m_big, (uint16_t)rlen, SW_NO_ERROR);
             m_big_off = m_big_len;        /* the whole answer goes out at once */
             m_ctap2_pending = false;
@@ -573,81 +571,54 @@ static standalone_rc_t on_tick(uint32_t now_ms){
     fido2_ble_poll();      /* BLE FIDO GATT: emit the next response fragment */
     nfc_poll();            /* NFC: CTAP2 answer / APDU processing           */
 
-    /* LED color reflects CTAP2 state:
-     *   purple (magenta) = UP granted, waiting for tap/command (5 s window)
-     *   yellow            = processing (registering / authenticating)
-     *   green (breathing) = success (operation completed)
-     *   blue              = armed, idle */
-    static bool m_up_led_active = false;
-    static bool m_done_led_active = false;
-    static uint8_t m_breath_phase = 0;
-    static uint8_t m_breath_count = 0;
+    /* LED color reflects CTAP2 state. We track a simple state machine:
+     *   blue   = armed, idle
+     *   purple = UP granted (5 s window)
+     *   yellow = processing
+     *   green  = success (1 s)
+     *   red    = error (1 s) */
+    static uint8_t m_led_state = 0;   /* 0=idle,1=up,2=proc,3=done */
+    static uint16_t m_led_timer = 0;  /* ticks remaining for done state */
 
-    if (was_pending && response_ready) {
-        /* Processing completed this tick. */
-        if (!m_done_led_active) {
-            m_done_led_active = true;
-            m_up_led_active = false;
-            m_breath_phase = 0;
-            m_breath_count = 0;
-            /* Green for success, red for error. */
-            if (m_last_ctap_status == 0x00) {
-                /* will breathe green below */
-            } else {
-                standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_RED);
-                standalone_led_solid();
-            }
+    if (m_led_timer > 0) {
+        m_led_timer--;
+        if (m_led_timer == 0) {
+            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
+            standalone_led_solid();
+            m_led_state = 0;
         }
+    }
+
+    /* Detect state transitions. */
+    if (was_pending && response_ready) {
+        /* Completed this tick. */
+        if (fido2_last_response_status() == 0x00) {
+            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_GREEN);
+        } else {
+            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_RED);
+        }
+        standalone_led_solid();
+        m_led_state = 3;
+        m_led_timer = 200;   /* 1 s at 5 ms/tick */
     } else if (was_pending) {
-        /* Still processing -> yellow. */
-        if (!m_up_led_active || m_done_led_active) {
+        /* Still processing. */
+        if (m_led_state != 2) {
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_YELLOW);
             standalone_led_solid();
-            m_up_led_active = false;
-            m_done_led_active = false;
+            m_led_state = 2;
         }
     } else if (fido2_up_granted()) {
-        if (!m_up_led_active && !m_done_led_active) {
+        if (m_led_state != 1) {
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_MAGENTA);
             standalone_led_solid();
-            m_up_led_active = true;
+            m_led_state = 1;
         }
     } else {
         /* Nothing pending, UP expired. */
-        m_up_led_active = false;
-    }
-
-    if (m_done_led_active && m_last_ctap_status == 0x00) {
-        uint32_t *leds = hw_get_led_array();
-        set_slot_light_color(RGB_GREEN);
-        if (m_breath_phase < 8) {
-            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
-                if (i <= m_breath_phase) nrf_gpio_pin_clear(leds[i]);
-                else                      nrf_gpio_pin_set(leds[i]);
-            }
-        } else {
-            uint8_t off = m_breath_phase - 8;
-            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
-                if (i <= off) nrf_gpio_pin_set(leds[i]);
-                else           nrf_gpio_pin_clear(leds[i]);
-            }
-        }
-        if (++m_breath_phase >= 16) m_breath_phase = 0;
-        if (++m_breath_count >= 200) {   /* 200 ticks x 5 ms = 1 s */
+        if (m_led_state != 0 && m_led_timer == 0) {
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
             standalone_led_solid();
-            m_done_led_active = false;
-            m_breath_phase = 0;
-            m_breath_count = 0;
-        }
-    } else if (m_done_led_active) {
-        /* Error case: red solid for 1 s, then back to blue. */
-        static uint8_t m_err_count = 0;
-        if (++m_err_count >= 200) {
-            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
-            standalone_led_solid();
-            m_done_led_active = false;
-            m_err_count = 0;
+            m_led_state = 0;
         }
     }
 

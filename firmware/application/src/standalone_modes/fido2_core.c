@@ -817,6 +817,11 @@ bool fido2_response_ready_any(void) {
     return s_state == FIDO2_ST_DONE;
 }
 
+uint8_t fido2_last_response_status(void) {
+    if (s_state != FIDO2_ST_DONE) return 0xFF;
+    return (s_resp_len > 0) ? s_resp[0] : 0xFF;
+}
+
 bool fido2_cancel(fido2_owner_t owner) {
     bool ok = false;
     FIDO2_CRIT_ENTER();
