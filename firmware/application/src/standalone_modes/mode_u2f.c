@@ -563,7 +563,10 @@ static void nfc_poll(void){
 
 static standalone_rc_t on_tick(uint32_t now_ms){
     (void)now_ms;
+    /* Capture state before tick to detect transitions. */
+    bool was_pending = fido2_has_pending_request();
     fido2_tick();          /* run the queued CTAP2 command (crypto included) */
+    bool response_ready = fido2_response_ready_any();
     fido2_hid_poll();      /* USB CTAPHID: emit the next response packet    */
     fido2_ble_poll();      /* BLE FIDO GATT: emit the next response fragment */
     nfc_poll();            /* NFC: CTAP2 answer / APDU processing           */
@@ -571,39 +574,49 @@ static standalone_rc_t on_tick(uint32_t now_ms){
     /* LED color reflects CTAP2 state:
      *   purple (magenta) = UP granted, waiting for tap/command (5 s window)
      *   yellow            = processing (registering / authenticating)
+     *   green (breathing) = success (operation completed)
      *   blue              = armed, idle */
     static bool m_up_led_active = false;
-    static bool m_proc_led_active = false;
-    if (fido2_is_processing()) {
-        if (!m_proc_led_active) {
+    static bool m_done_led_active = false;
+    static uint8_t m_breath_phase = 0;
+    static uint8_t m_breath_count = 0;
+
+    if (was_pending && response_ready) {
+        /* Processing completed this tick -> green breathing. */
+        if (!m_done_led_active) {
+            m_done_led_active = true;
+            m_up_led_active = false;
+            m_breath_phase = 0;
+            m_breath_count = 0;
+        }
+    } else if (was_pending) {
+        /* Still processing -> yellow. */
+        if (!m_up_led_active || m_done_led_active) {
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_YELLOW);
             standalone_led_solid();
-            m_proc_led_active = true;
             m_up_led_active = false;
+            m_done_led_active = false;
         }
     } else if (fido2_up_granted()) {
-        if (!m_up_led_active) {
+        if (!m_up_led_active && !m_done_led_active) {
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_MAGENTA);
             standalone_led_solid();
             m_up_led_active = true;
-            m_proc_led_active = false;
         }
-    } else if (m_proc_led_active) {
-        /* Processing finished: green breathing for ~1 s, then back to blue.
-         * No PWM on these LEDs, so breathing is simulated by turning the
-         * 8 slot LEDs on/off in a sweeping wave pattern. */
-        static uint8_t m_breath_phase = 0;
-        static uint8_t m_breath_count = 0;
+    } else {
+        /* Nothing pending, UP expired. */
+        m_up_led_active = false;
+    }
+
+    if (m_done_led_active) {
         uint32_t *leds = hw_get_led_array();
         set_slot_light_color(RGB_GREEN);
         if (m_breath_phase < 8) {
-            /* wave in: light up LEDs 0..phase */
             for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
                 if (i <= m_breath_phase) nrf_gpio_pin_clear(leds[i]);
                 else                      nrf_gpio_pin_set(leds[i]);
             }
         } else {
-            /* wave out: turn off LEDs 0..(phase-8) */
             uint8_t off = m_breath_phase - 8;
             for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
                 if (i <= off) nrf_gpio_pin_set(leds[i]);
@@ -614,16 +627,12 @@ static standalone_rc_t on_tick(uint32_t now_ms){
         if (++m_breath_count >= 200) {   /* 200 ticks x 5 ms = 1 s */
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
             standalone_led_solid();
-            m_proc_led_active = false;
+            m_done_led_active = false;
             m_breath_phase = 0;
             m_breath_count = 0;
         }
-    } else if (m_up_led_active) {
-        /* UP expired without processing: straight back to blue. */
-        standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
-        standalone_led_solid();
-        m_up_led_active = false;
     }
+
     return STANDALONE_RC_OK;
 }
 
