@@ -94,6 +94,7 @@ void     fido2_tick(void);
  * this is called, then execute with the UP flag set. The grant is consumed by
  * the next queued request. */
 bool     fido2_grant_user_presence(void);
+bool     fido2_up_granted(void);
 
 /* Cancel the queued request for `owner`. The owner receives status
  * CTAP2_ERR_KEEPALIVE_CANCEL. */
