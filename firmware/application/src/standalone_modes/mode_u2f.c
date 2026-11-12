@@ -566,16 +566,32 @@ static standalone_rc_t on_tick(uint32_t now_ms){
     fido2_hid_poll();      /* USB CTAPHID: emit the next response packet    */
     fido2_ble_poll();      /* BLE FIDO GATT: emit the next response fragment */
     nfc_poll();            /* NFC: CTAP2 answer / APDU processing           */
+
+    /* Revert purple (UP valid) back to blue once the 5 s grant expires or
+     * the grant is consumed by a CTAP2 operation. */
+    static bool m_up_led_active = false;
+    if (fido2_up_granted()) {
+        if (!m_up_led_active) {
+            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_MAGENTA);
+            standalone_led_solid();
+            m_up_led_active = true;
+        }
+    } else if (m_up_led_active) {
+        standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
+        standalone_led_solid();
+        m_up_led_active = false;
+    }
     return STANDALONE_RC_OK;
 }
 
 static standalone_rc_t on_button(standalone_button_evt_t evt) {
     if (evt == STANDALONE_BTN_BOTH_SHORT) {
-        if (fido2_grant_user_presence()) {
-            standalone_feedback(SL_FB_SUCCESS);  /* green triple-flash = UP granted */
-        } else {
-            standalone_feedback(SL_FB_ERROR);    /* red triple-flash = not armed */
-        }
+        fido2_grant_user_presence();   /* LED turns purple via on_tick */
+    } else if (evt == STANDALONE_BTN_BOTH_LONG) {
+        /* Allow disarm via long press when no STANDALONE_TOGGLE binding exists. */
+        fido2_core_disarm();
+        standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
+        standalone_led_clear();
     }
     return STANDALONE_RC_OK;
 }

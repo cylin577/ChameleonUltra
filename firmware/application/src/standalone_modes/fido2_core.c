@@ -795,6 +795,15 @@ bool fido2_grant_user_presence(void) {
     return true;
 }
 
+bool fido2_up_granted(void) {
+    if (!s_up_granted) return false;
+    bool ok;
+    FIDO2_CRIT_ENTER();
+    ok = (int32_t)(core_now_ms() - s_up_grant_deadline) < 0;
+    FIDO2_CRIT_EXIT();
+    return ok;
+}
+
 bool fido2_cancel(fido2_owner_t owner) {
     bool ok = false;
     FIDO2_CRIT_ENTER();

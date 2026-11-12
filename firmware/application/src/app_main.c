@@ -1074,16 +1074,24 @@ static void button_process_edge(int idx, const app_button_edge_t *edge) {
                                                                  APP_TIMER_TICKS(APP_BUTTON_GESTURE_MIN_TAP_MS),
                                                                  APP_TIMER_TICKS(BTN_LONG_PRESS_MS));
 
-    /* U2F standalone mode: when armed, any short press on A or B grants
-     * user presence (the CTAP2 UP gesture). No button binding required —
-     * the user should not have to configure STANDALONE_ACTION first. */
+    /* U2F standalone mode: when armed, button presses are intercepted:
+     *   short press  -> grant user presence (purple LED, 5 s window)
+     *   long press   -> disarm (so the user can exit without a binding)
+     * No button binding required. */
     if (app_standalone_get_state() != STANDALONE_STATE_DISARMED &&
-        app_standalone_get_mode() == STANDALONE_MODE_U2F &&
-        kind == APP_BUTTON_GESTURE_SHORT && !edge->pressed) {
-        app_standalone_on_button(STANDALONE_BTN_BOTH_SHORT);
-        m_btn_tap_state[idx].count = 0;
-        button_tap_timer_restart();
-        return;
+        app_standalone_get_mode() == STANDALONE_MODE_U2F) {
+        if (kind == APP_BUTTON_GESTURE_SHORT && !edge->pressed) {
+            app_standalone_on_button(STANDALONE_BTN_BOTH_SHORT);
+            m_btn_tap_state[idx].count = 0;
+            button_tap_timer_restart();
+            return;
+        }
+        if (kind == APP_BUTTON_GESTURE_LONG) {
+            app_standalone_on_button(STANDALONE_BTN_BOTH_LONG);
+            m_btn_tap_state[idx].count = 0;
+            button_tap_timer_restart();
+            return;
+        }
     }
 
     /* The button must be registered when ANY binding is set: the short
