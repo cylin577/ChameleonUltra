@@ -68,6 +68,7 @@ the mode is armed — no button binding required.** The LED changes color:
 - **Purple** (solid) = UP granted (5 s window) — tap or send command now
 - **Yellow** (solid) = processing (registering / authenticating)
 - **Green** (breathing wave, ~1 s) = success — operation completed
+- **Red** (solid, ~1 s) = error — CTAP2 operation failed
 - **Blue** (solid) = armed, idle
 
 The grant lasts 5 seconds and is consumed by one CTAP2 operation. A **long press**
