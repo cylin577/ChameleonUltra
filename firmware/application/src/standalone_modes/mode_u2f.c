@@ -571,7 +571,11 @@ static standalone_rc_t on_tick(uint32_t now_ms){
 
 static standalone_rc_t on_button(standalone_button_evt_t evt) {
     if (evt == STANDALONE_BTN_BOTH_SHORT) {
-        fido2_grant_user_presence();
+        if (fido2_grant_user_presence()) {
+            standalone_feedback(SL_FB_SUCCESS);  /* green triple-flash = UP granted */
+        } else {
+            standalone_feedback(SL_FB_ERROR);    /* red triple-flash = not armed */
+        }
     }
     return STANDALONE_RC_OK;
 }
