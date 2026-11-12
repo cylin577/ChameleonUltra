@@ -512,9 +512,12 @@ replayed on another site. Crypto is self-contained SHA-256/HMAC plus micro-ecc
 use.
 
 **CTAP2 user presence is mandatory.** `MakeCredential` and `GetAssertion` wait
-for one physical short press of the button bound to `STANDALONE_ACTION`. USB
-and BLE send `KEEPALIVE(UP_NEEDED)` while waiting; NFC holds the request. The
-grant expires after 5 seconds and authorizes one operation. `GetInfo` is exempt.
+for one physical short press. When the mode is armed, **pressing either button
+A or B (short press) grants user presence automatically** — you will see a green
+triple-flash. No button binding is required. You can also bind
+`STANDALONE_ACTION` to a button for the traditional flow. USB and BLE send
+`KEEPALIVE(UP_NEEDED)` while waiting; NFC holds the request. The grant expires
+after 5 seconds and authorizes one operation. `GetInfo` is exempt.
 The host `standalone trigger` command can arm the mode but cannot impersonate
 that physical gesture.
 
@@ -541,7 +544,8 @@ CTAP2 uses `none` attestation, so a key/cert is only needed for the CTAP1
 
 ```
 standalone set-mode u2f        # no --opt-in needed; writes no tag/slot
-#  press the TOGGLE button to ARM (blue LED)
+#  press the TOGGLE button to ARM (blue LED sweep -> solid blue)
+#  press either button A or B (short press) -> green triple-flash = UP granted
 #  NFC:  present the CU to an NFC reader (Android: Chrome -> webauthn.io)
 #  USB:  plug it in -- it enumerates as a FIDO HID device
 #  BLE:  pair and look for the 0xFFFD service

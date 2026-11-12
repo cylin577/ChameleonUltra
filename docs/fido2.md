@@ -63,8 +63,12 @@ Then press the **TOGGLE** button to arm it (blue LED). While armed, the
 authenticator answers on whichever transport the peer uses. Disarm with the
 same button or `standalone disarm`.
 
-Bind a short button press to `STANDALONE_ACTION` as well; that physical press
-is the user-presence gesture used by CTAP2:
+**User presence is granted by pressing either button A or B (short press) while
+the mode is armed — no button binding required.** You will see a green
+triple-flash confirming the grant. The grant lasts 5 seconds and is consumed
+by one CTAP2 operation.
+
+You can also bind `STANDALONE_ACTION` to a button for the traditional flow:
 
 ```sh
 hw settings btnpress -b -s -f STANDALONE_ACTION
@@ -100,16 +104,17 @@ expected answer, not a bug.
 `authenticatorMakeCredential` and `authenticatorGetAssertion` require a
 physical user-presence gesture. USB and BLE advertise
 `KEEPALIVE(UP_NEEDED)` while the request waits; NFC holds the ISO-DEP request
-until the gesture arrives. Press the button bound to `STANDALONE_ACTION` once.
-The grant expires after 5 seconds and is consumed by one CTAP2 operation.
+until the gesture arrives. Press **either button A or B** (short press) once. You will see a green
+triple-flash confirming the grant. The grant expires after 5 seconds and is
+consumed by one CTAP2 operation.
 `authenticatorGetInfo` does not require user presence.
 
 The host CLI/web link is synchronous and cannot carry CTAP KEEPALIVE frames.
-Press the physical ACTION button first, then send the MakeCredential or
-GetAssertion command within 5 seconds. Without that prior physical grant the
-firmware rejects the host request with CTAP status `0x27` (operation denied).
-`standalone trigger` may arm the mode from the host, but it deliberately cannot
-grant user presence.
+Press **either button A or B** (short press) first — you will see a green
+triple-flash — then send the MakeCredential or GetAssertion command within 5
+seconds. Without that prior physical grant the firmware rejects the host request
+with CTAP status `0x27` (operation denied). `standalone trigger` may arm the
+mode from the host, but it deliberately cannot grant user presence.
 
 ## Talking to it from the host
 
