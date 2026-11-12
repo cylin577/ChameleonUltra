@@ -804,6 +804,10 @@ bool fido2_up_granted(void) {
     return ok;
 }
 
+bool fido2_is_processing(void) {
+    return s_state == FIDO2_ST_PROCESSING;
+}
+
 bool fido2_cancel(fido2_owner_t owner) {
     bool ok = false;
     FIDO2_CRIT_ENTER();

@@ -95,6 +95,7 @@ void     fido2_tick(void);
  * the next queued request. */
 bool     fido2_grant_user_presence(void);
 bool     fido2_up_granted(void);
+bool     fido2_is_processing(void);
 
 /* Cancel the queued request for `owner`. The owner receives status
  * CTAP2_ERR_KEEPALIVE_CANCEL. */

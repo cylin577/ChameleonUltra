@@ -567,19 +567,31 @@ static standalone_rc_t on_tick(uint32_t now_ms){
     fido2_ble_poll();      /* BLE FIDO GATT: emit the next response fragment */
     nfc_poll();            /* NFC: CTAP2 answer / APDU processing           */
 
-    /* Revert purple (UP valid) back to blue once the 5 s grant expires or
-     * the grant is consumed by a CTAP2 operation. */
+    /* LED color reflects CTAP2 state:
+     *   purple (magenta) = UP granted, waiting for tap/command (5 s window)
+     *   yellow            = processing (registering / authenticating)
+     *   blue              = armed, idle */
     static bool m_up_led_active = false;
-    if (fido2_up_granted()) {
+    static bool m_proc_led_active = false;
+    if (fido2_is_processing()) {
+        if (!m_proc_led_active) {
+            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_YELLOW);
+            standalone_led_solid();
+            m_proc_led_active = true;
+            m_up_led_active = false;
+        }
+    } else if (fido2_up_granted()) {
         if (!m_up_led_active) {
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_MAGENTA);
             standalone_led_solid();
             m_up_led_active = true;
+            m_proc_led_active = false;
         }
-    } else if (m_up_led_active) {
+    } else if (m_up_led_active || m_proc_led_active) {
         standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
         standalone_led_solid();
         m_up_led_active = false;
+        m_proc_led_active = false;
     }
     return STANDALONE_RC_OK;
 }
