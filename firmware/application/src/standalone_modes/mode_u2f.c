@@ -32,6 +32,7 @@
 #include "app_standalone.h"
 #include "app_timer.h"
 #include "standalone_led.h"
+#include "nrf_gpio.h"
 #include "nfc_14a.h"
 #include "rfid/nfctag/hf/nfc_14a_4.h"
 #include "utils/fds_util.h"
@@ -588,17 +589,34 @@ static standalone_rc_t on_tick(uint32_t now_ms){
             m_proc_led_active = false;
         }
     } else if (m_proc_led_active) {
-        /* Processing finished: green for ~500 ms, then back to blue. */
-        static uint8_t m_done_count = 0;
-        if (m_done_count == 0) {
-            standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_GREEN);
-            standalone_led_solid();
+        /* Processing finished: green breathing for ~1 s, then back to blue.
+         * No PWM on these LEDs, so breathing is simulated by turning the
+         * 8 slot LEDs on/off in a sweeping wave pattern. */
+        static uint8_t m_breath_phase = 0;
+        static uint8_t m_breath_count = 0;
+        uint32_t *leds = hw_get_led_array();
+        set_slot_light_color(RGB_GREEN);
+        if (m_breath_phase < 8) {
+            /* wave in: light up LEDs 0..phase */
+            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+                if (i <= m_breath_phase) nrf_gpio_pin_clear(leds[i]);
+                else                      nrf_gpio_pin_set(leds[i]);
+            }
+        } else {
+            /* wave out: turn off LEDs 0..(phase-8) */
+            uint8_t off = m_breath_phase - 8;
+            for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+                if (i <= off) nrf_gpio_pin_set(leds[i]);
+                else           nrf_gpio_pin_clear(leds[i]);
+            }
         }
-        if (++m_done_count >= 100) {   /* 100 ticks x 5 ms = 500 ms */
+        if (++m_breath_phase >= 16) m_breath_phase = 0;
+        if (++m_breath_count >= 200) {   /* 200 ticks x 5 ms = 1 s */
             standalone_led_set_mode_color(STANDALONE_MODE_U2F, RGB_BLUE);
             standalone_led_solid();
             m_proc_led_active = false;
-            m_done_count = 0;
+            m_breath_phase = 0;
+            m_breath_count = 0;
         }
     } else if (m_up_led_active) {
         /* UP expired without processing: straight back to blue. */
