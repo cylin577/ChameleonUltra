@@ -436,7 +436,7 @@ static uint8_t parse_make_credential(const uint8_t *d, size_t len,
                 if (key_is(ks, kl, "rk")) {
                     uint8_t vm; uint64_t vv;
                     if (!cbor_head(&c, &vm, &vv) || vm != 7) return FIDO2_ERR_INVALID_CBOR;
-                    p->rk = (vv != 0);
+                    p->rk = (vv == 21);
                 } else if (!cbor_skip(&c)) return FIDO2_ERR_INVALID_CBOR;
             }
         } else if (!cbor_skip(&c)) return FIDO2_ERR_INVALID_CBOR;
