@@ -64,9 +64,13 @@ authenticator answers on whichever transport the peer uses. Disarm with the
 same button or `standalone disarm`.
 
 **User presence is granted by pressing either button A or B (short press) while
-the mode is armed — no button binding required.** You will see a green
-triple-flash confirming the grant. The grant lasts 5 seconds and is consumed
-by one CTAP2 operation.
+the mode is armed — no button binding required.** The LED changes color:
+- **Purple** (solid) = UP granted (5 s window) — tap or send command now
+- **Yellow** (solid) = processing (registering / authenticating)
+- **Blue** (solid) = armed, idle
+
+The grant lasts 5 seconds and is consumed by one CTAP2 operation. A **long press**
+on A or B disarms the mode.
 
 You can also bind `STANDALONE_ACTION` to a button for the traditional flow:
 
@@ -104,17 +108,16 @@ expected answer, not a bug.
 `authenticatorMakeCredential` and `authenticatorGetAssertion` require a
 physical user-presence gesture. USB and BLE advertise
 `KEEPALIVE(UP_NEEDED)` while the request waits; NFC holds the ISO-DEP request
-until the gesture arrives. Press **either button A or B** (short press) once. You will see a green
-triple-flash confirming the grant. The grant expires after 5 seconds and is
-consumed by one CTAP2 operation.
-`authenticatorGetInfo` does not require user presence.
+until the gesture arrives. Press **either button A or B** (short press) once. The LED turns purple,
+confirming the grant. The grant expires after 5 seconds and is consumed by one
+CTAP2 operation. `authenticatorGetInfo` does not require user presence.
 
 The host CLI/web link is synchronous and cannot carry CTAP KEEPALIVE frames.
-Press **either button A or B** (short press) first — you will see a green
-triple-flash — then send the MakeCredential or GetAssertion command within 5
-seconds. Without that prior physical grant the firmware rejects the host request
-with CTAP status `0x27` (operation denied). `standalone trigger` may arm the
-mode from the host, but it deliberately cannot grant user presence.
+Press **either button A or B** (short press) first — the LED turns purple —
+then send the MakeCredential or GetAssertion command within 5 seconds. Without
+that prior physical grant the firmware rejects the host request with CTAP status
+`0x27` (operation denied). `standalone trigger` may arm the mode from the host,
+but it deliberately cannot grant user presence.
 
 ## Talking to it from the host
 
