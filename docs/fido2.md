@@ -67,7 +67,7 @@ same button or `standalone disarm`.
 the mode is armed — no button binding required.** The LED changes color:
 - **Purple** (solid) = UP granted (5 s window) — tap or send command now
 - **Yellow** (solid) = processing (registering / authenticating)
-- **Green** (solid, ~0.5 s) = success — operation completed
+- **Green** (breathing wave, ~1 s) = success — operation completed
 - **Blue** (solid) = armed, idle
 
 The grant lasts 5 seconds and is consumed by one CTAP2 operation. A **long press**
