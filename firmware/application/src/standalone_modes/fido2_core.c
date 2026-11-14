@@ -14,7 +14,15 @@
 #include <string.h>
 
 #include "fido2_core.h"
+#if defined(FIDO2_HOST_BUILD)
 #include "uECC.h"
+#else
+#include "nrf_crypto.h"
+#include "nrf_crypto_hash.h"
+#include "nrf_crypto_hmac.h"
+#include "nrf_crypto_ecc.h"
+#include "nrf_crypto_ecdsa.h"
+#endif
 
 #if defined(FIDO2_HOST_BUILD)
 #define FIDO2_CRIT_ENTER() do { } while (0)
@@ -25,6 +33,7 @@
 #define FIDO2_CRIT_EXIT()  CRITICAL_REGION_EXIT()
 #endif
 
+#if defined(FIDO2_HOST_BUILD)
 /* ===================================================================== */
 /*  SHA-256 + HMAC-SHA256 (self-contained, FIPS 180-4 / RFC 2104)         */
 /* ===================================================================== */
@@ -96,6 +105,17 @@ void fido2_sha256(const uint8_t *data, size_t len, uint8_t out[32]) {
     sha256_fin(&c, out);
 }
 
+#else
+/* Firmware: SHA-256 via Cryptocell. */
+void fido2_sha256(const uint8_t *data, size_t len, uint8_t out[32]) {
+    nrf_crypto_hash_context_t ctx;
+    size_t out_len = 32;
+    (void)nrf_crypto_hash_init(&ctx, &g_nrf_crypto_hash_sha256_info);
+    (void)nrf_crypto_hash_update(&ctx, data, len);
+    (void)nrf_crypto_hash_finalize(&ctx, out, &out_len);
+}
+#endif
+
 /* DER-encode an ECDSA (r,s) pair (each 32 bytes) into out. Returns length. */
 static uint16_t der_sig(const uint8_t *rs, uint8_t *out){
     const uint8_t *r=rs, *s=rs+32;
@@ -114,12 +134,26 @@ static uint16_t der_sig(const uint8_t *rs, uint8_t *out){
 }
 
 uint16_t fido2_sign_der(const uint8_t priv[32], const uint8_t digest[32], uint8_t *out, size_t out_max) {
+#if defined(FIDO2_HOST_BUILD)
     uint8_t rs[64], der[72];
     if (!uECC_sign(priv, digest, 32, rs, uECC_secp256r1())) return 0;
     uint16_t n = der_sig(rs, der);
     if (n == 0 || n > out_max) return 0;
     memcpy(out, der, n);
     return n;
+#else
+    nrf_crypto_ecc_private_key_t pk;
+    if (nrf_crypto_ecc_private_key_from_raw(&g_nrf_crypto_ecc_secp256r1_curve_info, &pk, priv, 32) != NRF_SUCCESS) return 0;
+    uint8_t rs[64]; size_t rs_len = sizeof(rs);
+    nrf_crypto_ecdsa_sign_context_t ctx;
+    if (nrf_crypto_ecdsa_sign(&ctx, &pk, digest, 32, rs, &rs_len) != NRF_SUCCESS) { nrf_crypto_ecc_private_key_free(&pk); return 0; }
+    nrf_crypto_ecc_private_key_free(&pk);
+    uint8_t der[72];
+    uint16_t n = der_sig(rs, der);
+    if (n == 0 || n > out_max) return 0;
+    memcpy(out, der, n);
+    return n;
+#endif
 }
 
 /* ===================================================================== */
@@ -297,10 +331,12 @@ static size_t   s_req_len;
 static uint8_t  s_resp[FIDO2_MAX_RESPONSE];
 static size_t   s_resp_len;
 
+#if defined(FIDO2_HOST_BUILD)
 static int core_rng(uint8_t *dest, unsigned size) {
     if (!s_io || !s_io->random_bytes) return 0;
     return s_io->random_bytes(dest, size) ? 1 : 0;
 }
+#endif
 
 static bool rng_bytes(uint8_t *dst, size_t len) {
     return s_io && s_io->random_bytes && s_io->random_bytes(dst, len);
@@ -311,11 +347,23 @@ static bool rng_bytes(uint8_t *dst, size_t len) {
 /* ===================================================================== */
 void fido2_derive_priv(const uint8_t rp_id_hash[32], const uint8_t nonce[32], uint8_t priv[32]){
     uint8_t in[1+32+32]; in[0]=0x01; memcpy(in+1,rp_id_hash,32); memcpy(in+33,nonce,32);
+#if defined(FIDO2_HOST_BUILD)
     hmac_sha256(s_mk, sizeof(s_mk), in, sizeof(in), priv);
+#else
+    size_t plen = 32;
+    nrf_crypto_hmac_context_t ctx;
+    (void)nrf_crypto_hmac_calculate(&ctx, &g_nrf_crypto_hmac_sha256_info, priv, &plen, s_mk, sizeof(s_mk), in, sizeof(in));
+#endif
 }
 void fido2_derive_mac(const uint8_t rp_id_hash[32], const uint8_t nonce[32], uint8_t mac[32]){
     uint8_t in[1+32+32]; in[0]=0x02; memcpy(in+1,rp_id_hash,32); memcpy(in+33,nonce,32);
+#if defined(FIDO2_HOST_BUILD)
     hmac_sha256(s_mk, sizeof(s_mk), in, sizeof(in), mac);
+#else
+    size_t mlen = 32;
+    nrf_crypto_hmac_context_t ctx;
+    (void)nrf_crypto_hmac_calculate(&ctx, &g_nrf_crypto_hmac_sha256_info, mac, &mlen, s_mk, sizeof(s_mk), in, sizeof(in));
+#endif
 }
 
 /* Sign counter: bump + persist. */
@@ -458,6 +506,7 @@ static size_t ctap_make_credential(const uint8_t *d, size_t len, uint8_t *out, s
     fido2_sha256(p.rpid, p.rpid_len, rpIdHash);
 
     uint8_t nonce[32], priv[32], pub[64], mac[32];
+#if defined(FIDO2_HOST_BUILD)
     uECC_Curve C = uECC_secp256r1();
     for (int t = 0; ; t++) {
         if (t > 8) return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
@@ -465,6 +514,22 @@ static size_t ctap_make_credential(const uint8_t *d, size_t len, uint8_t *out, s
         fido2_derive_priv(rpIdHash, nonce, priv);
         if (uECC_compute_public_key(priv, pub, C)) break;
     }
+#else
+    for (int t = 0; ; t++) {
+        if (t > 8) return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
+        if (!rng_bytes(nonce, 32)) return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
+        fido2_derive_priv(rpIdHash, nonce, priv);
+        nrf_crypto_ecc_private_key_t pk;
+        nrf_crypto_ecc_public_key_t pubk;
+        if (nrf_crypto_ecc_private_key_from_raw(&g_nrf_crypto_ecc_secp256r1_curve_info, &pk, priv, 32) != NRF_SUCCESS) continue;
+        if (nrf_crypto_ecc_public_key_calculate(NULL, &pk, &pubk) == NRF_SUCCESS) {
+            size_t plen = 64;
+            if (nrf_crypto_ecc_public_key_to_raw(&pubk, pub, &plen) == NRF_SUCCESS) { nrf_crypto_ecc_public_key_free(&pubk); nrf_crypto_ecc_private_key_free(&pk); break; }
+        }
+        nrf_crypto_ecc_public_key_free(&pubk);
+        nrf_crypto_ecc_private_key_free(&pk);
+    }
+#endif
     fido2_derive_mac(rpIdHash, nonce, mac);
     uint8_t credId[FIDO2_CRED_ID_LEN]; memcpy(credId, nonce, 32); memcpy(credId + 32, mac, 32);
 
@@ -573,11 +638,8 @@ static size_t ctap_get_assertion(const uint8_t *d, size_t len, uint8_t *out, siz
 
     uint8_t ad[37];                                      /* rpIdHash | flags(UP) | signCount */
     memcpy(ad, rp_id_hash, 32); ad[32] = 0x01; memcpy(ad + 33, sc4, 4);
-    uint8_t h[32];
-    {
-        sha256_t sc;
-        sha256_init(&sc); sha256_upd(&sc, ad, 37); sha256_upd(&sc, p.cdh, 32); sha256_fin(&sc, h);
-    }
+    uint8_t buf[69]; memcpy(buf, ad, 37); memcpy(buf+37, p.cdh, 32);
+    uint8_t h[32]; fido2_sha256(buf, 69, h);
     uint8_t sig[72];
     uint16_t sl = fido2_sign_der(priv, h, sig, sizeof sig);
     if (!sl) return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
@@ -648,7 +710,9 @@ bool fido2_core_arm(uint8_t transport_mask) {
     if (!s_io->load_counter(&ctr)) ctr = 0;
     s_ctr = ctr;
 
-    uECC_set_rng(core_rng);
+#if !defined(FIDO2_HOST_BUILD)
+    (void)nrf_crypto_init();
+#endif
 
     s_mask = transport_mask;
     s_armed = true;

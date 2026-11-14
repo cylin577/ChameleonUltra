@@ -35,6 +35,13 @@ make -C firmware/application/src/standalone_modes/tests test
 make -C firmware/application/src/rfid/nfctag/lf/tests test
 ```
 
+## Build & commit (user notes)
+
+- Use `make -j5` for local testing (not -j or other counts).
+- Every push to `main` (touching `firmware/**`) triggers the nightly DFU build CI.
+  Do not push until work is fully done and verified locally.
+- DFU/UF2 artifacts come from CI; local builds are compile-only on this arm64 box.
+
 ## Conventions
 
 - Indent: 4 spaces for C/Python (root `.editorconfig`: `*.{c,h,py}`).

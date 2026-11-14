@@ -323,6 +323,11 @@ SRC_FILES   += $(PROJ_DIR)/standalone_modes/mode_u2f.c
  SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_core.c
  SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_hid.c
  SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_ble.c
+# Vendored makerdiary/nrf52-u2f U2F implementation (crypto + persistence),
+# adopted as the reference backend for the CTAP1 path. Additive only.
+SRC_FILES   += $(PROJ_DIR)/u2f_makerdiary/u2f_impl.c
+SRC_FILES   += $(PROJ_DIR)/u2f_makerdiary/u2f_makerdiary_stubs.c
+INC_FOLDERS += $(PROJ_DIR)/u2f_makerdiary/
 # USB CTAPHID class (FIDO HID interface, USB interface 2).
  SRC_FILES   += $(SDK_ROOT)/components/libraries/usbd/class/hid/app_usbd_hid.c
  SRC_FILES   += $(SDK_ROOT)/components/libraries/usbd/class/hid/generic/app_usbd_hid_generic.c

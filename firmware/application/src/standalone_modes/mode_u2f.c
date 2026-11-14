@@ -39,6 +39,8 @@
 #include "nrf_drv_rng.h"
 #include "uECC.h"
 #include "fido2_core.h"
+#include "u2f.h"
+#include "nrf_crypto.h"
 #include "fido2_hid.h"
 #include "fido2_ble.h"
 
@@ -96,7 +98,13 @@ static const uint8_t FIDO2_V[] = {'F','I','D','O','_','2','_','0'};
  *  credential once a real key/cert have been provisioned.
  * ===================================================================== */
 static const uint8_t U2F_ATT_PRIV_DEFAULT[32] = { 0 };
-static const uint8_t U2F_ATT_CERT_DEFAULT[]   = { 0x30, 0x00 };
+
+/* Vendored makerdiary U2F globals (attestation material + AES key). */
+extern uint8_t aes_key[];
+extern uint8_t attestation_cert[];
+extern uint8_t attestation_private_key[];
+extern uint16_t attestation_cert_size;
+extern uint8_t attestation_private_key_size;
 
 /* ---- session ---- */
 static nfc_tag_14a_4_tcl_state_t m_tcl;
@@ -236,90 +244,46 @@ static bool apdu_parse(const uint8_t *a, uint16_t n, const uint8_t **data, uint1
     *lc=(a[5]<<8)|a[6]; *data=a+7; return (7+*lc) <= n;
 }
 
-/* Build REGISTER response into m_big. */
+/* Build REGISTER response into m_big. (makerdiary reference backend) */
 static uint16_t do_register(const uint8_t *body, uint16_t lc, uint8_t *out){
     if (lc != 64) return put_sw(out, 0, SW_WRONG_LENGTH);
-    /* Refuse if the attestation key isn't provisioned (all-zero) — signing with
-     * an invalid scalar can hang uECC. Run `hw u2f set-attestation` first. */
-    uint8_t az = 0; for (int i = 0; i < 32; i++) az |= m_att_priv[i];
-    if (az == 0) return put_sw(out, 0, SW_CONDITIONS_NOT_SAT);
-    const uint8_t *chal=body, *app=body+32;
-    uint8_t nonce[32], priv[32], pub[64], kh[KH_LEN], mac[32];
-    uECC_Curve C = uECC_secp256r1();
-
-    for (int tries=0; ; tries++){
-        if (tries>8) return put_sw(out,0,SW_WRONG_DATA);
-        if (!u2f_rng(nonce,32)) return put_sw(out,0,SW_WRONG_DATA);
-        fido2_derive_priv(app, nonce, priv);
-        if (uECC_compute_public_key(priv, pub, C)) break;   /* valid scalar */
-    }
-    fido2_derive_mac(app, nonce, mac);
-    memcpy(kh, nonce, 32); memcpy(kh+32, mac, 32);
-
-    /* attestation signature over 0x00 | app | chal | kh | 0x04|pub */
-    uint8_t pub65[65]; pub65[0]=0x04; memcpy(pub65+1, pub, 64);
-    uint8_t pre[1 + 32 + 32 + KH_LEN + 65];
-    pre[0]=0x00;
-    memcpy(pre+1, app, 32);
-    memcpy(pre+33, chal, 32);
-    memcpy(pre+65, kh, KH_LEN);
-    memcpy(pre+65+KH_LEN, pub65, 65);
-    uint8_t h[32]; fido2_sha256(pre, sizeof(pre), h);
-    uint8_t sig_der[72];
-    uint16_t sig_len = fido2_sign_der(m_att_priv, h, sig_der, sizeof(sig_der));
-    if (!sig_len) return put_sw(out,0,SW_WRONG_DATA);
-
-    /* attestation cert: provisioned record (FDS, zero-copy) or the fallback */
-    fds_record_desc_t cdesc; uint16_t clen = 0;
-    const uint8_t *cert = fds_peek(U2F_FDS_FILE, U2F_FDS_KEY_ATT_CERT, &clen, &cdesc);
-    bool peeked = (cert != NULL);
-    if (!peeked) { cert = U2F_ATT_CERT_DEFAULT; clen = sizeof(U2F_ATT_CERT_DEFAULT); }
-
-    uint16_t i=0;
-    out[i++]=0x05;
-    memcpy(out+i, pub65, 65); i+=65;
-    out[i++]=KH_LEN;
-    memcpy(out+i, kh, KH_LEN); i+=KH_LEN;
-    memcpy(out+i, cert, clen); i+=clen;
-    if (peeked) fds_peek_close(&cdesc);
-    memcpy(out+i, sig_der, sig_len); i+=sig_len;
-    i = put_sw(out, i, SW_NO_ERROR);
-    return i;
+    U2F_REGISTER_REQ req;
+    memcpy(req.chal, body, 32);
+    memcpy(req.appId, body + 32, 32);
+    U2F_REGISTER_RESP resp;
+    uint16_t resp_len = 0;
+    uint16_t sw = u2f_register(&req, &resp, U2F_AUTH_ENFORCE, &resp_len);
+    if (sw != U2F_SW_NO_ERROR) return put_sw(out, 0, sw);
+    memcpy(out, &resp, resp_len);
+    return put_sw(out, resp_len, SW_NO_ERROR);
 }
 
-/* Build AUTHENTICATE response. */
+/* Build AUTHENTICATE response. (makerdiary reference backend) */
 static uint16_t do_authenticate(uint8_t p1, const uint8_t *body, uint16_t lc, uint8_t *out){
-    if (lc < 65) return put_sw(out,0,SW_WRONG_LENGTH);
-    const uint8_t *chal=body, *app=body+32;
-    uint8_t khl=body[64];
-    if (khl != KH_LEN || lc < (uint16_t)(65+khl)) return put_sw(out,0,SW_WRONG_DATA);
-    const uint8_t *kh=body+65, *nonce=kh, *mac=kh+32;
+    if (lc < 65) return put_sw(out, 0, SW_WRONG_LENGTH);
+    if (p1 == U2F_AUTH_CHECK_ONLY) return put_sw(out, 0, SW_CONDITIONS_NOT_SAT);
+    const uint8_t *kh = body + 65;
+    uint8_t khl = body[64];
+    if (khl != KH_LEN || lc < (uint16_t)(65 + khl)) return put_sw(out, 0, SW_WRONG_DATA);
 
-    uint8_t want[32]; fido2_derive_mac(app, nonce, want);
-    if (memcmp(want, mac, 32) != 0) return put_sw(out,0,SW_WRONG_DATA);  /* not ours */
-    if (p1 == U2F_AUTH_CHECK_ONLY) return put_sw(out,0,SW_CONDITIONS_NOT_SAT); /* "mine" */
+    U2F_AUTHENTICATE_REQ req;
+    memcpy(req.chal, body, 32);
+    memcpy(req.appId, body + 32, 32);
+    req.keyHandleLen = khl;
+    memcpy(req.keyHandle, kh, khl);
 
-    /* NFC tap is the presence gesture. */
-    uint8_t up=0x01;
-    uint32_t ctr = fido2_core_next_counter();
-    uint8_t ctb[4]={ (uint8_t)(ctr>>24),(uint8_t)(ctr>>16),(uint8_t)(ctr>>8),(uint8_t)ctr };
-
-    uint8_t priv[32]; fido2_derive_priv(app, nonce, priv);
-    uint8_t pre[32 + 1 + 4 + 32];
-    memcpy(pre, app, 32);
-    pre[32] = up;
-    memcpy(pre+33, ctb, 4);
-    memcpy(pre+37, chal, 32);
-    uint8_t h[32]; fido2_sha256(pre, sizeof(pre), h);
-    uint8_t sig_der[72];
-    uint16_t sig_len = fido2_sign_der(priv, h, sig_der, sizeof(sig_der));
-    if (!sig_len) return put_sw(out,0,SW_WRONG_DATA);
-
-    uint16_t i=0;
-    out[i++]=up; memcpy(out+i, ctb, 4); i+=4;
-    memcpy(out+i, sig_der, sig_len); i+=sig_len;
-    i = put_sw(out, i, SW_NO_ERROR);
-    return i;
+    int flags = (p1 == U2F_AUTH_ENFORCE) ? U2F_AUTH_ENFORCE : 0;
+    U2F_AUTHENTICATE_RESP resp;
+    uint16_t resp_len = 0;
+    uint16_t sw = u2f_authenticate(&req, &resp, flags, &resp_len);
+    if (sw != U2F_SW_NO_ERROR) return put_sw(out, 0, sw);
+    /* makerdiary-style counter persistence: store. */
+    {
+        uint32_t c = u2f_impl_get_counter();
+        fds_write_sync(U2F_FDS_FILE, U2F_FDS_KEY_CTR, sizeof(c), &c);
+    }
+    memcpy(out, &resp, resp_len);
+    return put_sw(out, resp_len, SW_NO_ERROR);
 }
 
 /* APDU dispatch → writes to m_big, returns total length (incl SW). */
@@ -468,6 +432,28 @@ static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len){
     uint16_t apl = sizeof(m_att_priv);
     if (!fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_ATT_PRIV, &apl, m_att_priv) || apl != sizeof(m_att_priv))
         memcpy(m_att_priv, U2F_ATT_PRIV_DEFAULT, sizeof(m_att_priv));
+
+    /* makerdiary-style counter persistence: load. */
+    {
+        uint32_t c = 0; uint16_t cl = sizeof(c);
+        if (fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_CTR, &cl, (uint8_t *)&c) && cl == sizeof(c))
+            u2f_impl_set_counter(c);
+    }
+
+    /* Initialize Cryptocell-backed crypto (makerdiary reference backend). */
+    (void)nrf_crypto_init();
+
+    /* Populate vendored makerdiary globals from runtime-provisioned material. */
+    memcpy(attestation_private_key, m_att_priv, sizeof(m_att_priv));
+    attestation_private_key_size = sizeof(m_att_priv);
+    /* aes_key: derive a per-device key from the attestation key (first 16 bytes). */
+    memcpy(aes_key, m_att_priv, 16);
+    /* attestation cert */
+    uint16_t cert_apl = 512;
+    if (!fds_read_sync(U2F_FDS_FILE, U2F_FDS_KEY_ATT_CERT, &cert_apl, attestation_cert) || cert_apl < 2) {
+        attestation_cert[0] = 0x30; attestation_cert[1] = 0x00; cert_apl = 2;
+    }
+    attestation_cert_size = cert_apl;
 
     /* Arm the shared core: it loads (or creates) the master key + counter and
      * enables the three FIDO transports. */
