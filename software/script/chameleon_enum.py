@@ -220,6 +220,8 @@ class Command(enum.IntEnum):
     DESFIRE_GET_STATS = 6011
     DESFIRE_READER_AUTH_ISO7816 = 6012
     DESFIRE_READER_GET_VERSION = 6013
+    HF14A_4_STATIC_RESP_INFO = 6014
+    HF14A_4_STATIC_RESP_DUMP = 6015
 
     # Standalone (host-less) modes subsystem
     STANDALONE_GET_MODE         = 7000
@@ -236,6 +238,7 @@ class Command(enum.IntEnum):
     STANDALONE_GET_AVAILABLE    = 7011
     STANDALONE_GET_RESULT_FOR   = 7012
     STANDALONE_CLEAR_RESULT_FOR = 7013
+    STANDALONE_GET_STATUS       = 7014
 
     EM410X_SET_EMU_ID = 5000
     EM410X_GET_EMU_ID = 5001
@@ -869,6 +872,11 @@ class StandaloneMode(enum.IntEnum):
     NFC_CANARY  = 0x09   # bait card; alerts when a reader probes it
     GDB_GATEWAY = 0x0A   # CDC becomes a GDB memory/flash gateway (no SWD)
     U2F         = 0x0B   # FIDO U2F (CTAP1) authenticator over NFC
+    USB_NET     = 0x0C   # USB Ethernet (ECM/RNDIS); CLI frames over TCP port 18888
+    ZIGBEE      = 0x0D   # passive 802.15.4 (Zigbee) receive
+    SPECTRUM    = 0x0E   # one-shot 2.4 GHz ISM energy-detect sweep
+    ESB         = 0x0F   # passive ESB-framed RX, known address (e.g. Logitech Unifying)
+    ESB_PROMISC = 0x10   # brute-force partial-address ESB sniff, unknown address (experimental)
 
     @classmethod
     def from_name(cls, name: str) -> "StandaloneMode":

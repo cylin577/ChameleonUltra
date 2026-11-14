@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -58,6 +59,11 @@ typedef enum {
     STANDALONE_MODE_NFC_CANARY  = 0x09,  /* CU as bait card; alerts when a reader probes it */
     STANDALONE_MODE_GDB_GATEWAY = 0x0A,  /* CDC becomes a GDB memory/flash gateway (no SWD) */
     STANDALONE_MODE_U2F         = 0x0B,  /* FIDO U2F (CTAP1) authenticator over NFC */
+    STANDALONE_MODE_USB_NET     = 0x0C,  /* USB Ethernet (CDC-ECM); CLI frames over TCP */
+    STANDALONE_MODE_ZIGBEE      = 0x0D,  /* passive 802.15.4 (Zigbee) receive */
+    STANDALONE_MODE_SPECTRUM    = 0x0E,  /* one-shot 2.4 GHz ISM energy-detect sweep */
+    STANDALONE_MODE_ESB         = 0x0F,  /* passive ESB-framed RX, known address (e.g. Logitech Unifying) */
+    STANDALONE_MODE_ESB_PROMISC = 0x10,  /* brute-force partial-address ESB sniff, unknown address */
 
     STANDALONE_MODE__COUNT              /* sentinel - keep last */
 } standalone_mode_t;
@@ -140,7 +146,18 @@ typedef struct standalone_mode_iface {
      * Called by standalone ls to show data for all modes without arming.
      * NULL for modes that produce no results (e.g. slot_cycle). */
     void              (*ensure_loaded)(void);
+    /* Optional: append "key=value\n" lines describing live state to out.
+     * Returns the bytes written (<= out_max - 1). Main context. */
+    size_t            (*get_status)(char *out, size_t out_max);
+    /* Optional: called after this mode's config was stored, armed or not. */
+    void              (*on_config)(const uint8_t *cfg, size_t cfg_len);
 } standalone_mode_iface_t;
+
+/* Append one "key=value\n" line to out at offset len (advances len). */
+#define STATUS_KV(out, max, len, ...) do { \
+        int n_ = snprintf((out) + (len), (max) - (len), __VA_ARGS__); \
+        if (n_ > 0) (len) += ((size_t)n_ < (max) - (len)) ? (size_t)n_ : (max) - (len) - 1; \
+    } while (0)
 
 /* -------------------------------------------------------------------------
  * Mode registry - extern decls. Conditionally compiled via the
@@ -170,6 +187,11 @@ extern const standalone_mode_iface_t mode_nfc_canary_iface;    /* NFCT only, wor
 
 extern const standalone_mode_iface_t mode_gdb_gateway_iface;   /* USB GDB gateway, no RF/reader */
 extern const standalone_mode_iface_t mode_u2f_iface;           /* FIDO U2F over NFC, NFCT only */
+extern const standalone_mode_iface_t mode_usb_net_iface;       /* USB Ethernet + TCP CLI link, no RF */
+extern const standalone_mode_iface_t mode_zigbee_iface;        /* passive 802.15.4 RX via SoftDevice timeslots */
+extern const standalone_mode_iface_t mode_spectrum_iface;      /* one-shot 2.4 GHz ISM energy-detect sweep */
+extern const standalone_mode_iface_t mode_esb_iface;            /* passive ESB-framed RX via SoftDevice timeslots */
+extern const standalone_mode_iface_t mode_esb_promisc_iface;    /* brute-force partial-address ESB sniff, unknown address */
 
 /* -------------------------------------------------------------------------
  * Public API
@@ -183,6 +205,10 @@ uint8_t             app_standalone_get_flags(void);
 
 standalone_rc_t     app_standalone_set_mode(standalone_mode_t mode, uint8_t flags);
 bool                app_standalone_mode_available(standalone_mode_t mode);
+
+/* "key=value\n" lines for the selected mode (generic ones, then the mode's own).
+ * Returns the bytes written. */
+size_t              app_standalone_get_status(char *out, size_t out_max);
 
 standalone_rc_t     app_standalone_set_config(standalone_mode_t mode,
         const uint8_t *cfg, size_t cfg_len);

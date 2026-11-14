@@ -179,6 +179,7 @@ FAKE_MODE(mode_emultrace_iface,  STANDALONE_MODE_EMUL_TRACE)
 FAKE_MODE(mode_nfc_canary_iface,  STANDALONE_MODE_NFC_CANARY)
 FAKE_MODE(mode_gdb_gateway_iface, STANDALONE_MODE_GDB_GATEWAY)
 FAKE_MODE(mode_u2f_iface,         STANDALONE_MODE_U2F)
+FAKE_MODE(mode_usb_net_iface,     STANDALONE_MODE_USB_NET)
 
 /* -------------------------------------------------------------------------
  * Helpers

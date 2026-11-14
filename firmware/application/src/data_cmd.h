@@ -253,6 +253,8 @@
 #define DATA_CMD_HF14A_4_STATIC_RESP            (6003)  /* add/clear static APDU response pair */
 #define DATA_CMD_HF14A_4_READER_APDU            (6004)  /* select+RATS+send APDU, keep field   */
 #define DATA_CMD_HF14A_4_EMV_SCAN               (6005)  /* full EMV scan in one call            */
+#define DATA_CMD_HF14A_4_STATIC_RESP_INFO       (6014)  /* read-only: static resp count/bytes   */
+#define DATA_CMD_HF14A_4_STATIC_RESP_DUMP       (6015)  /* read-only: static resp table contents */
 
 #define DATA_CMD_DESFIRE_SET_CREDENTIAL         (6006)  /* chunked .dfcb octets -> active slot  */
 #define DATA_CMD_DESFIRE_GET_CREDENTIAL         (6007)  /* chunked .dfcb octets <- active slot  */
@@ -280,6 +282,7 @@
 #define DATA_CMD_STANDALONE_GET_AVAILABLE       (7011)
 #define DATA_CMD_STANDALONE_GET_RESULT_FOR      (7012)
 #define DATA_CMD_STANDALONE_CLEAR_RESULT_FOR    (7013)
+#define DATA_CMD_STANDALONE_GET_STATUS          (7014)
 
 #define DATA_CMD_EM410X_SET_EMU_ID              (5000)
 #define DATA_CMD_EM410X_GET_EMU_ID              (5001)

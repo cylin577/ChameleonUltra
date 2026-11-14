@@ -1,0 +1,96 @@
+/*
+ * mode_usb_net.c
+ *
+ * Standalone mode: USB Ethernet (CDC-ECM or RNDIS). While armed the device re-enumerates
+ * with an extra network interface; the host gets 192.168.16.2 over DHCP and the
+ * device answers at 192.168.16.1. TCP port 18888 (config --port) carries the normal framed CLI
+ * protocol, so the python CLI connects with
+ *
+ *     hw connect -p tcp:192.168.16.1:18888
+ *
+ * The CDC serial port stays available. While a TCP client is connected it owns
+ * the command link and replies go to it. Disarm (TOGGLE button, `standalone
+ * disarm` over TCP or BLE) re-enumerates back to the serial-only device.
+ *
+ * Config (4 bytes): u8 version=1, u8 flags, u16 port (0 = default). Flags: bit0 DHCP
+ * default gateway, bit1 auto (on whenever USB is attached, beside any other mode),
+ * bits2-3 host class (0 build default, 1 ecm, 2 rndis).
+ *
+ * Needs STANDALONE_USB_NET=1 (TinyUSB + lwIP build, see usb_main_tusb.c).
+ */
+
+#include "app_standalone.h"
+#include "usb_main.h"
+#include "usbnet.h"
+
+#include "nrf_log.h"
+
+#ifndef USBNET_DEFAULT_RNDIS
+#define USBNET_DEFAULT_RNDIS 0
+#endif
+
+#define CFG_GATEWAY   (1u << 0)
+#define CFG_AUTO      (1u << 1)
+#define CFG_CLS_SHIFT 2              /* 0 = build default, 1 = ecm, 2 = rndis */
+
+/* Config is applied whether or not the mode is armed. */
+static void apply_cfg(const uint8_t *cfg, size_t cfg_len) {
+    uint16_t port = 0;
+    uint8_t  flags = 0;
+    if (cfg != NULL && cfg_len >= 4 && cfg[0] == 1) {
+        flags = cfg[1];
+        port  = (uint16_t)(cfg[2] | (cfg[3] << 8));
+    }
+    uint8_t cls = (flags >> CFG_CLS_SHIFT) & 3;
+    bool rndis = cls ? (cls == 2) : USBNET_DEFAULT_RNDIS;
+    usbnet_set_port(port);
+    usbnet_set_gateway(flags & CFG_GATEWAY);
+    usbnet_configure(flags & CFG_AUTO, rndis);
+}
+
+void usbnet_boot(void) {
+    uint8_t cfg[16];
+    size_t  n = 0;
+    if (app_standalone_get_config(STANDALONE_MODE_USB_NET, cfg, sizeof(cfg), &n) != STANDALONE_RC_OK) n = 0;
+    apply_cfg(n ? cfg : NULL, n);
+}
+
+static void on_config(const uint8_t *cfg, size_t cfg_len) {
+    apply_cfg(cfg, cfg_len);
+}
+
+static standalone_rc_t on_enter(const uint8_t *cfg, size_t cfg_len) {
+    apply_cfg(cfg, cfg_len);
+    usbnet_enable(true);
+    NRF_LOG_INFO("usb_net: armed, USB Ethernet after re-enumeration");
+    return STANDALONE_RC_OK;
+}
+
+static standalone_rc_t on_exit(void) {
+    usbnet_enable(false);               /* stays up if the config says auto */
+    NRF_LOG_INFO("usb_net: disarmed");
+    return STANDALONE_RC_OK;
+}
+
+static standalone_rc_t on_button(standalone_button_evt_t evt) {
+    (void)evt;   /* no on-device action */
+    return STANDALONE_RC_OK;
+}
+
+const standalone_mode_iface_t mode_usb_net_iface = {
+    .id              = STANDALONE_MODE_USB_NET,
+    .name            = "usb_net",
+    .writes_tag      = false,
+    .writes_slot     = false,
+    .wants_tick      = false,
+    .on_enter        = on_enter,
+    .on_exit         = on_exit,
+    .on_button       = on_button,
+    .on_tick         = NULL,
+    .get_result_size = NULL,
+    .read_result     = NULL,
+    .clear_result    = NULL,
+    .ensure_loaded   = NULL,
+    .get_status      = usbnet_get_status,
+    .on_config       = on_config,
+};

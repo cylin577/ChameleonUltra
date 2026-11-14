@@ -9,6 +9,9 @@
 
 #include "ble_relay.h"
 #include "app_standalone.h"
+#if CONFIG_STANDALONE_USB_NET
+#include "usbnet.h"
+#endif
 #include "app_cmd.h"
 #include "data_cmd.h"
 #include "app_status.h"
@@ -343,6 +346,38 @@ data_frame_tx_t *cmd_handler_standalone_get_available(uint16_t cmd, uint16_t sta
         resp[m] = app_standalone_mode_available((standalone_mode_t)m) ? 1 : 0;
     }
     return data_frame_make(cmd, STATUS_SUCCESS, sizeof(resp), resp);
+}
+
+/* 7014 GET_STATUS
+ * Request:  empty
+ * Response: UTF-8 text, one "key=value" per line: generic lines for the
+ *           selected mode, then the mode's own (empty if no mode selected).
+ */
+data_frame_tx_t *cmd_handler_standalone_get_status(uint16_t cmd, uint16_t status,
+        uint16_t length, uint8_t *data) {
+    (void)status;
+    (void)length;
+    (void)data;
+    char buf[512];
+    size_t n = app_standalone_get_status(buf, sizeof(buf));
+#if CONFIG_STANDALONE_USB_NET
+    /* usb_net runs beside other modes: show it as net_* lines when it is not the selected mode */
+    if (usbnet_running() && app_standalone_get_mode() != STANDALONE_MODE_USB_NET) {
+        char tmp[320];
+        size_t t = usbnet_get_status(tmp, sizeof(tmp));
+        tmp[t] = '\0';
+        for (char *line = tmp; *line && n + 5 < sizeof(buf);) {
+            char *nl = strchr(line, '\n');
+            size_t ll = nl ? (size_t)(nl - line) + 1 : strlen(line);
+            if (n + 4 + ll >= sizeof(buf)) break;
+            memcpy(buf + n, "net_", 4);
+            memcpy(buf + n + 4, line, ll);
+            n += 4 + ll;
+            line += ll;
+        }
+    }
+#endif
+    return data_frame_make(cmd, STATUS_SUCCESS, n, (uint8_t *)buf);
 }
 
 /* 7008 RELAY_DIAG
