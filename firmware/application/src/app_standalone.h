@@ -58,7 +58,7 @@ typedef enum {
     STANDALONE_MODE_HF14A_TAP_SNIFF = 0x08,  /* passive hf14a tap sniff — Ultra only */
     STANDALONE_MODE_NFC_CANARY  = 0x09,  /* CU as bait card; alerts when a reader probes it */
     STANDALONE_MODE_GDB_GATEWAY = 0x0A,  /* CDC becomes a GDB memory/flash gateway (no SWD) */
-    STANDALONE_MODE_U2F         = 0x0B,  /* FIDO U2F (CTAP1) authenticator over NFC */
+    STANDALONE_MODE_RESERVED_0B = 0x0B,  /* retired: was FIDO U2F; do not reuse (persisted FDS value) */
     STANDALONE_MODE_USB_NET     = 0x0C,  /* USB Ethernet (CDC-ECM); CLI frames over TCP */
     STANDALONE_MODE_ZIGBEE      = 0x0D,  /* passive 802.15.4 (Zigbee) receive */
     STANDALONE_MODE_SPECTRUM    = 0x0E,  /* one-shot 2.4 GHz ISM energy-detect sweep */
@@ -186,7 +186,6 @@ extern const standalone_mode_iface_t mode_hf14a_tap_sniff_iface; /* passive tap 
 extern const standalone_mode_iface_t mode_nfc_canary_iface;    /* NFCT only, works on Lite */
 
 extern const standalone_mode_iface_t mode_gdb_gateway_iface;   /* USB GDB gateway, no RF/reader */
-extern const standalone_mode_iface_t mode_u2f_iface;           /* FIDO U2F over NFC, NFCT only */
 extern const standalone_mode_iface_t mode_usb_net_iface;       /* USB Ethernet + TCP CLI link, no RF */
 extern const standalone_mode_iface_t mode_zigbee_iface;        /* passive 802.15.4 RX via SoftDevice timeslots */
 extern const standalone_mode_iface_t mode_spectrum_iface;      /* one-shot 2.4 GHz ISM energy-detect sweep */

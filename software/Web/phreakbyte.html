@@ -384,7 +384,7 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
     <h2><span class="sec-num">02</span>Device control</h2>
 
     <div class="ctl">
-      <select id="modeSel" aria-label="Standalone mode"><option value="9">nfc_canary</option><option value="6">emul_trace</option><option value="3">authtrace</option><option value="8">hf14a_tap_sniff</option><option value="7">relay</option><option value="4">slot_cycle</option><option value="1">autoclone</option><option value="2">read_replay</option><option value="5">dict_check</option><option value="10">gdb_gateway</option><option value="11">u2f</option><option value="12">usb_net</option></select>
+      <select id="modeSel" aria-label="Standalone mode"><option value="9">nfc_canary</option><option value="6">emul_trace</option><option value="3">authtrace</option><option value="8">hf14a_tap_sniff</option><option value="7">relay</option><option value="4">slot_cycle</option><option value="1">autoclone</option><option value="2">read_replay</option><option value="5">dict_check</option><option value="10">gdb_gateway</option><option value="12">usb_net</option></select>
       <button class="ghost" id="setmode">Set mode</button>
       <button id="arm">Arm</button>
       <button class="ghost" id="disarm">Disarm</button>
@@ -395,11 +395,6 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
     <div class="det" id="cstat">Connect to see whether the device is armed.</div>
     <div class="ctl" id="cfg" style="margin-top:10px;display:none"></div>
     <div id="rdwrap" style="display:none;margin-top:8px"><div class="det" id="rdiag">relay idle</div></div>
-
-    <div class="block" style="margin-top:18px">
-      <h3>FIDO2 authenticator (u2f mode)</h3>
-      <div class="det">The <code>u2f</code> standalone mode runs a FIDO2 / CTAP2 authenticator over NFC, USB (CTAPHID) and BLE (FIDO GATT 0xFFFD). Arm the mode, then talk to the authenticator from the in-browser terminal: <code>hw u2f get-info</code> prints its capabilities, <code>hw u2f ctap --cmd make-credential --rp-id <domain> --client-data-hash <hex></code> runs a CTAP2 command. The Python CLI has the same <code>hw u2f ...</code> commands.</div>
-    </div>
 
     <div class="block" style="margin-top:18px">
       <h3>Per-mode result (7011–7013)</h3>
@@ -581,7 +576,7 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
         <label class="cfgf">Key (hex)<input id="d_fdskey" value="0000" placeholder="e.g. 0001"></label>
         <button class="small" id="d_fdsread">Read record (hex dump)</button>
       </div>
-      <div class="det">A read on a protected or non-existent record fails the same way either way (no "protected" disclosure) — this fork deliberately hides the U2F master key / attestation private key records this way. "Read record" pages the whole thing in 240-byte slices.</div>
+      <div class="det">A read on a protected or non-existent record fails the same way either way (no "protected" disclosure) — this fork deliberately hides legacy authenticator private-key records that may remain on deployed devices this way. "Read record" pages the whole thing in 240-byte slices.</div>
       <div class="result" id="d_fdsResult"></div>
       <pre id="d_fdsHex" style="display:none;max-height:320px;overflow-y:auto"></pre>
     </div>
@@ -1424,7 +1419,6 @@ AABBCCDDEEFF</textarea></label>
 <script src="disasm_thumb.js?v=1"></script>
 <script src="hf14ainfo.js?v=1"></script>
 <script src="multitap.js?v=4"></script>
-<script src="fido2_cbor.js?v=1"></script>
 <script src="plot.js?v=1"></script>
 <script src="logic.js?v=1"></script>
 <script src="fullcmd.js?v=29"></script>

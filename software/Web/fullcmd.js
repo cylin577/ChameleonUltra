@@ -39,12 +39,12 @@ const CU = {
   GET_DFU_APP_VERSION:1046,
   BL_STAGE_BEGIN:1051, BL_STAGE_DATA:1052, BL_STAGE_COMMIT:1053,
   GET_DFU_SETTINGS_VERSION:1054, SET_DFU_SETTINGS_VERSION:1055, BL_STAGE_COMMIT_RAW:1056,
-  BL_INFO:1057, FDS_LIST:1058, FDS_READ:1059, U2F_SET_ATTESTATION:1060,
+  BL_INFO:1057, FDS_LIST:1058, FDS_READ:1059,
   GET_BOOTLOADER_VERSION:1061, GET_FREE_MEMORY:1062,
   // 1063/1064 were GET/SET_MULTI_TAP_CONFIG (the v8 "short press after N
   // taps" modifier). Replaced by the per-tap-count bindings below.
   GET_MULTI_TAP_BINDINGS:1065, SET_MULTI_TAP_BINDINGS:1066,
-  FIDO2_CTAP:1067,
+  // 1060, 1067 and 1068 are retired command IDs; kept reserved, do not reuse.
 
   HF14A_SCAN:2000, MF1_DETECT_SUPPORT:2001, MF1_DETECT_PRNG:2002,
   MF1_AUTH_ONE_KEY_BLOCK:2007, MF1_READ_ONE_BLOCK:2008, MF1_WRITE_ONE_BLOCK:2009,
@@ -2327,8 +2327,6 @@ wire("e_savejson", eCard, async () => {
    "SET_DFU_SETTINGS_VERSION": "u8 mask (b0 app, b1 bl), u32 app, u32 bl",
    "FDS_LIST": "-> N * {u16 file_id, u16 key, u16 len_bytes} (big-endian)",
    "FDS_READ": "u16 file_id, u16 key, u16 offset, u16 len -> record slice (len 0 = max)",
-   "U2F_SET_ATTESTATION": "u8[32] att_priv, u8[] att_cert_der -> provision U2F attestation",
-   "FIDO2_CTAP": "u8 ctap_cmd + u8[] cbor -> u8 ctap_status + u8[] response (u2f mode armed)",
    "HF14A_SCAN_KEEP": "scan+RATS, keep field alive for APDU exchange",
    "HF14A_AUTH_TRACE": "full anticoll + Crypto1 auth, every frame returned for inspection",
    "HF14A_PASSIVE_RECV": "listen-only: capture one card->reader frame under an external field (uplink sniff gate test)",

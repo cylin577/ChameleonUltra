@@ -25,7 +25,6 @@
 # STANDALONE_HF14A_TAP_SNIFF ?= 1   # passive HF14A tap sniff (Ultra only)
 # STANDALONE_RELAY           ?= 1   # BLE peer relay (Ultra only)
 # STANDALONE_GDB_GATEWAY     ?= 1   # CDC becomes a GDB memory/flash gateway (no SWD)
-# STANDALONE_U2F             ?= 1   # FIDO2/CTAP2 authenticator over NFC, USB (CTAPHID) and BLE (FIDO GATT 0xFFFD) — needs vendored micro-ecc in src/crypto/micro-ecc/
 # STANDALONE_ZIGBEE          ?= 1   # passive 802.15.4 (Zigbee) receive via SoftDevice timeslots
 # STANDALONE_ESB             ?= 1   # known-address Nordic ESB/Logitech Unifying receive via SoftDevice timeslots
 # STANDALONE_ESB_PROMISC     ?= 1   # unknown-address ESB discovery (partial-address correlator sync, experimental)

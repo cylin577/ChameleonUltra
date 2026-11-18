@@ -29,7 +29,6 @@ STANDALONE_RELAY           ?= 0   # disabled by default
 STANDALONE_GDB_GATEWAY     ?= 0   # disabled by default
 GDB_GATEWAY_EXEC           ?= 1   # exec control (breakpoints/step) in gdb_gateway; 0 = memory/flash only
 GDB_GATEWAY_PKT            ?= 0x200   # RSP PacketSize; raise (e.g. 0x800) for faster bulk reads, more RAM
-STANDALONE_U2F             ?= 0   # disabled by default (FIDO U2F over NFC; needs micro-ecc)
 STANDALONE_USB_NET         ?= 0   # disabled by default (USB Ethernet; swaps the USB stack to TinyUSB + lwIP, needs ../fetch_usbnet_deps.sh)
 STANDALONE_ZIGBEE          ?= 0   # disabled by default (passive 802.15.4 receive in SoftDevice timeslots)
 STANDALONE_SPECTRUM        ?= 0   # disabled by default (one-shot 2.4 GHz ISM energy-detect sweep in SoftDevice timeslots)
@@ -46,7 +45,6 @@ CFLAGS += -DCONFIG_STANDALONE_NFC_CANARY=$(STANDALONE_NFC_CANARY)
 CFLAGS += -DCONFIG_STANDALONE_HF14A_TAP_SNIFF=$(STANDALONE_HF14A_TAP_SNIFF)
 CFLAGS += -DCONFIG_STANDALONE_RELAY=$(STANDALONE_RELAY)
 CFLAGS += -DCONFIG_STANDALONE_GDB_GATEWAY=$(STANDALONE_GDB_GATEWAY)
-CFLAGS += -DCONFIG_STANDALONE_U2F=$(STANDALONE_U2F)
 CFLAGS += -DCONFIG_STANDALONE_USB_NET=$(STANDALONE_USB_NET)
 CFLAGS += -DCONFIG_STANDALONE_ZIGBEE=$(STANDALONE_ZIGBEE)
 CFLAGS += -DCONFIG_STANDALONE_SPECTRUM=$(STANDALONE_SPECTRUM)
@@ -322,30 +320,6 @@ SRC_FILES += $(PROJ_DIR)/standalone_modes/mode_esb_promisc.c
 SRC_FILES += $(PROJ_DIR)/esb/esb_promisc_radio.c
 INC_FOLDERS += $(PROJ_DIR)/esb
 endif
-ifeq ($(strip $(STANDALONE_U2F)),1)
-SRC_FILES   += $(PROJ_DIR)/standalone_modes/mode_u2f.c
- SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_core.c
- SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_hid.c
- SRC_FILES   += $(PROJ_DIR)/standalone_modes/fido2_ble.c
-# Vendored makerdiary/nrf52-u2f U2F implementation (crypto + persistence),
-# adopted as the reference backend for the CTAP1 path. Additive only.
-SRC_FILES   += $(PROJ_DIR)/u2f_makerdiary/u2f_impl.c
-SRC_FILES   += $(PROJ_DIR)/u2f_makerdiary/u2f_makerdiary_stubs.c
-INC_FOLDERS += $(PROJ_DIR)/u2f_makerdiary/
-# USB CTAPHID class (FIDO HID interface, USB interface 2).
- SRC_FILES   += $(SDK_ROOT)/components/libraries/usbd/class/hid/app_usbd_hid.c
- SRC_FILES   += $(SDK_ROOT)/components/libraries/usbd/class/hid/generic/app_usbd_hid_generic.c
-# Vendored micro-ecc (kmackay/micro-ecc): copy the WHOLE repo into
-# crypto/micro-ecc/ — uECC.c #includes uECC.h, uECC_vli.h, types.h and the
-# curve/asm .inc files, so all of them must be present (only uECC.c is compiled).
-SRC_FILES   += $(PROJ_DIR)/crypto/micro-ecc/uECC.c
-INC_FOLDERS += $(PROJ_DIR)/crypto/micro-ecc/
-CFLAGS      += -DuECC_SUPPORTS_secp256r1=1 -DuECC_SUPPORTS_secp160r1=0 \
-               -DuECC_SUPPORTS_secp192r1=0 -DuECC_SUPPORTS_secp224r1=0 \
-               -DuECC_SUPPORTS_secp256k1=0 -DuECC_OPTIMIZATION_LEVEL=2 \
-               -DuECC_SUPPORT_COMPRESSED_POINT=0
-endif
-
 # Include folders common to all targets
 INC_FOLDERS += \
   ${PROJ_DIR} \

@@ -91,9 +91,7 @@ class Command(enum.IntEnum):
     SET_DFU_SETTINGS_VERSION = 1055
     FDS_LIST = 1058
     FDS_READ = 1059
-    U2F_SET_ATTESTATION = 1060
-    FIDO2_CTAP = 1067
-    FIDO2_GRANT_UP = 1068
+    # 1060, 1067 and 1068 are retired command IDs; kept reserved, do not reuse.
 
     HF14A_SCAN = 2000
     MF1_DETECT_SUPPORT = 2001
@@ -875,7 +873,7 @@ class StandaloneMode(enum.IntEnum):
     HF14A_TAP_SNIFF = 0x08   # passive hf14a tap sniff (Ultra only)
     NFC_CANARY  = 0x09   # bait card; alerts when a reader probes it
     GDB_GATEWAY = 0x0A   # CDC becomes a GDB memory/flash gateway (no SWD)
-    U2F         = 0x0B   # FIDO U2F (CTAP1) authenticator over NFC
+    # 0x0B is retired; do not reuse (persisted FDS value).
     USB_NET     = 0x0C   # USB Ethernet (ECM/RNDIS); CLI frames over TCP port 18888
     ZIGBEE      = 0x0D   # passive 802.15.4 (Zigbee) receive
     SPECTRUM    = 0x0E   # one-shot 2.4 GHz ISM energy-detect sweep

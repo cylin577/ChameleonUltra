@@ -27,9 +27,6 @@
 #if CONFIG_STANDALONE_GDB_GATEWAY
 #include "gdb_rsp.h"
 #endif
-#if CONFIG_STANDALONE_U2F
-#include "standalone_modes/fido2_ble.h"
-#endif
 
 #define NRF_LOG_MODULE_NAME ble_main
 #include "nrf_log.h"
@@ -102,22 +99,11 @@ static uint16_t   m_conn_handle          = BLE_CONN_HANDLE_INVALID;             
 static uint16_t   m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - 3;            /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
 lf_adc_callback_t m_lf_adc_callback      = NULL;
 
-/* Advertising UUID lists. The FIDO service is only advertised when its
- * GATT service was actually registered, so the list pointer and the count
- * always describe the same list — no reliance on the array order. */
 static ble_uuid_t m_adv_uuids[]          =                                          /**< Universally unique service identifier. */
 {
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE},
     {BLE_UUID_BATTERY_SERVICE, BLE_UUID_TYPE_BLE},
 };
-#if CONFIG_STANDALONE_U2F
-static ble_uuid_t m_adv_uuids_fido[]     =
-{
-    {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE},
-    {BLE_UUID_BATTERY_SERVICE, BLE_UUID_TYPE_BLE},
-    {0xFFFD, BLE_UUID_TYPE_BLE},                    /**< FIDO GATT service (BLE FIDO2) */
-};
-#endif
 volatile bool g_is_ble_connected = false;
 volatile bool g_is_low_battery_shutdown = false;
 static ble_opt_t m_static_pin_option;
@@ -374,16 +360,6 @@ static void services_init(void) {
     err_code = ble_bas_init(&m_bas, &bas_init_obj);
     APP_ERROR_CHECK(err_code);
 
-#if CONFIG_STANDALONE_U2F
-    // FIDO GATT service (BLE FIDO2 transport for the u2f standalone mode).
-    // Optional: a failure here (e.g. an attribute table that is too small)
-    // must never take the device down. The BLE FIDO transport is then simply
-    // not offered.
-    err_code = ble_fido_svc_init();
-    if (err_code != NRF_SUCCESS) {
-        NRF_LOG_ERROR("FIDO GATT service unavailable: %s", nrf_strerror_get(err_code));
-    }
-#endif
 }
 
 /**@brief Function for handling an event from the Connection Parameters Module.
@@ -640,14 +616,6 @@ static void advertising_init(void) {
 
     init.srdata.uuids_complete.p_uuids  = m_adv_uuids;
     init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
-#if CONFIG_STANDALONE_U2F
-    /* Only advertise the FIDO UUID when the service was registered. */
-    if (ble_fido_svc_available()) {
-        init.srdata.uuids_complete.p_uuids  = m_adv_uuids_fido;
-        init.srdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids_fido) / sizeof(m_adv_uuids_fido[0]);
-    }
-#endif
-
     init.config.ble_adv_fast_enabled  = true;
     init.config.ble_adv_fast_interval = APP_ADV_INTERVAL;
     init.config.ble_adv_fast_timeout  = 0;

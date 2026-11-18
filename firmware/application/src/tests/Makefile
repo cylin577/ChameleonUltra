@@ -26,7 +26,8 @@ test_nfc_amiibo_refresh_button: test_nfc_amiibo_refresh_button.c ../nfc_amiibo_r
 # The standalone framework against the SDK stubs in stubs/ — the real
 # app_standalone.c is compiled, only the SDK/FDS/LED layer is faked.
 test_standalone_result_gate: test_standalone_result_gate.c ../app_standalone.c ../app_standalone.h
-	$(CC) $(CFLAGS) -Istubs -I.. -I../utils -o $@ \
+	$(CC) $(CFLAGS) -Istubs -I.. -I../utils \
+	    -DSTANDALONE_TEST_MODE_IFACE=mode_up_gated_iface -o $@ \
 	    test_standalone_result_gate.c ../app_standalone.c
 
 clean:

@@ -725,6 +725,3 @@ firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_uid_refresh
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_keys_store
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_auto_refresh
 firmware/application/src/standalone_modes/tests/test_nfc_canary_core
-firmware/application/src/standalone_modes/tests/test_fido2_core
-firmware/application/src/standalone_modes/tests/test_fido2_hid
-firmware/application/src/standalone_modes/tests/test_fido2_ble

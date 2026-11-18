@@ -8,6 +8,18 @@ from chameleon_enum import Command, SlotNumber, Status, TagSenseType, TagSpecifi
 from chameleon_enum import ButtonPressFunction, ButtonType, MifareClassicDarksideStatus
 from chameleon_enum import MfcKeyType, MfcValueBlockOperator
 
+
+def _standalone_mode_from_value(value):
+    """Coerce a retired mode slot (0x0B) from a stale device reading to DISABLED."""
+    from chameleon_enum import StandaloneMode
+    try:
+        return StandaloneMode(value)
+    except ValueError:
+        if value == 0x0B:
+            return StandaloneMode.DISABLED
+        raise
+
+
 CURRENT_VERSION_SETTINGS = 6
 
 new_key = b'\x20\x20\x66\x66'
@@ -2390,40 +2402,6 @@ class ChameleonCMD:
         return out
 
     @expect_response(Status.SUCCESS)
-    def u2f_set_attestation(self, priv: bytes, cert: bytes):
-        """Provision the U2F attestation key (32 bytes) + cert (DER) into FDS."""
-        if len(priv) != 32:
-            raise ValueError("attestation private key must be 32 bytes")
-        return self.device.send_cmd_sync(Command.U2F_SET_ATTESTATION, priv + cert)
-
-    @expect_response(Status.SUCCESS)
-    def fido2_grant_up(self) -> bytes:
-        """Request or check user presence for the armed FIDO2 authenticator.
-
-        Returns the firmware payload: 0x00 means presence is granted and 0x01
-        means it is not. This command cannot grant presence without a physical
-        button press.
-        """
-        resp = self.device.send_cmd_sync(Command.FIDO2_GRANT_UP, b"")
-        resp.parsed = resp.data
-        return resp
-
-    @expect_response(Status.SUCCESS)
-    def fido2_ctap(self, ctap_cmd: bytes) -> bytes:
-        """Run a CTAP2 command on the device's FIDO2 authenticator.
-
-        `ctap_cmd` is the raw CTAP request: the command byte followed by the
-        CBOR parameters. Returns the raw CTAP response: status byte + payload.
-        """
-        if not ctap_cmd:
-            raise ValueError("CTAP request must not be empty")
-        if len(ctap_cmd) > 1024:
-            raise ValueError("CTAP request is too long (max 1024 bytes)")
-        resp = self.device.send_cmd_sync(Command.FIDO2_CTAP, ctap_cmd)
-        resp.parsed = resp.data
-        return resp
-
-    @expect_response(Status.SUCCESS)
     def get_device_capabilities(self):
         """
         Get list of commands that client understands
@@ -2604,7 +2582,7 @@ class ChameleonCMD:
         Older firmware returns 4 bytes; fds field is None in that case.
         Returns tuple (state, mode, flags, fds_or_None).
         """
-        from chameleon_enum import StandaloneMode, StandaloneState, StandaloneFlag
+        from chameleon_enum import StandaloneState, StandaloneFlag
         resp = self.device.send_cmd_sync(Command.STANDALONE_GET_MODE, b'')
         if resp.status != Status.SUCCESS or len(resp.data) < 4:
             raise UnexpectedResponseError(
@@ -2618,7 +2596,7 @@ class ChameleonCMD:
             fds = {'words_used': wu, 'pages_available': wa,
                    'valid_records': vr, 'dirty_records': dr}
         return (StandaloneState(state_v),
-                StandaloneMode(mode_v),
+                _standalone_mode_from_value(mode_v),
                 StandaloneFlag(flags_v),
                 fds)
 
@@ -2633,14 +2611,14 @@ class ChameleonCMD:
         On error returns the raw response object so the caller can inspect
         resp.status.
         """
-        from chameleon_enum import StandaloneMode, StandaloneState, StandaloneFlag
+        from chameleon_enum import StandaloneState, StandaloneFlag
         payload = struct.pack('<BB', int(mode), int(flags))
         resp = self.device.send_cmd_sync(Command.STANDALONE_SET_MODE, payload)
         if resp.status != Status.SUCCESS:
             return resp
         state_v, mode_v, flags_v, _reserved = struct.unpack('<BBBB', resp.data[:4])
         return (StandaloneState(state_v),
-                StandaloneMode(mode_v),
+                _standalone_mode_from_value(mode_v),
                 StandaloneFlag(flags_v))
 
     def standalone_get_config(self, mode) -> bytes:

@@ -278,17 +278,16 @@ static data_frame_tx_t *cmd_processor_bl_info(uint16_t cmd, uint16_t status, uin
 
 /* fds_list/fds_read are a generic flash-record dump meant for diagnosing a
  * device without SWD (see cmd_processor_bl_info above). They must not be able
- * to exfiltrate key material that's supposed to be non-extractable -- the
- * U2F master key and attestation private key (mode_u2f.c: U2F_FDS_FILE
- * 0x1020, keys U2F_FDS_KEY_MK 0x0001 / U2F_FDS_KEY_ATT_PRIV 0x0003). Keep
- * these literals in sync with mode_u2f.c if those ever change. The counter
- * (key 2) and cert (key 4) aren't secret and stay readable. */
-#define FDS_PROTECTED_U2F_FILE      0x1020
-#define FDS_PROTECTED_U2F_KEY_MK    0x0001
-#define FDS_PROTECTED_U2F_KEY_ATT   0x0003
+ * to exfiltrate key material that's supposed to be non-extractable -- legacy
+ * U2F private keys may still sit in flash on deployed devices (file 0x1020,
+ * keys 0x0001 / 0x0003). Keep these historical literals so such records stay
+ * hidden. The counter (key 2) and cert (key 4) aren't secret and stay readable. */
+#define FDS_PROTECTED_LEGACY_FILE      0x1020
+#define FDS_PROTECTED_LEGACY_KEY_MK    0x0001
+#define FDS_PROTECTED_LEGACY_KEY_ATT   0x0003
 static bool fds_record_is_protected(uint16_t file_id, uint16_t key) {
-    return file_id == FDS_PROTECTED_U2F_FILE &&
-           (key == FDS_PROTECTED_U2F_KEY_MK || key == FDS_PROTECTED_U2F_KEY_ATT);
+    return file_id == FDS_PROTECTED_LEGACY_FILE &&
+           (key == FDS_PROTECTED_LEGACY_KEY_MK || key == FDS_PROTECTED_LEGACY_KEY_ATT);
 }
 
 static data_frame_tx_t *cmd_processor_fds_list(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
@@ -345,77 +344,6 @@ static data_frame_tx_t *cmd_processor_fds_read(uint16_t cmd, uint16_t status, ui
     fds_peek_close(&desc);
     return tx;
 }
-
-#if CONFIG_STANDALONE_U2F
-#include "standalone_modes/mode_u2f.h"
-#include "standalone_modes/fido2_core.h"
-static data_frame_tx_t *cmd_processor_u2f_set_attestation(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    /* payload: u8[32] attestation private key | u8[] attestation cert (DER) */
-    if (length < 32 + 2) return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
-    uint16_t cert_len = length - 32;
-    bool ok = u2f_set_attestation(data, data + 32, cert_len);
-    return data_frame_make(cmd, ok ? STATUS_SUCCESS : STATUS_FLASH_WRITE_FAIL, 0, NULL);
-}
-
-/* CTAP2 over the host link (CLI / web console). Payload: u8 ctap_cmd | u8[]
- * cbor. Answer: u8 ctap_status | u8[] response. The core runs the command
- * inline — the handler is called from the main loop, not from an ISR.
- * MakeCredential/GetAssertion need a physical ACTION-button grant made before
- * the command; this synchronous host protocol cannot deliver CTAP KEEPALIVE. */
-static uint8_t m_fido2_req[FIDO2_MAX_REQUEST];
-static uint8_t m_fido2_resp[FIDO2_MAX_RESPONSE];
-
-static data_frame_tx_t *cmd_processor_fido2_ctap(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    (void)status;
-    if (length < 1 || length > FIDO2_MAX_REQUEST) {
-        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
-    }
-    /* The mode has to be armed: otherwise there is no authenticator to talk to. */
-    if (fido2_core_transport_mask() == 0) {
-        uint8_t ctap_status = 0x01;             /* invalid command */
-        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
-    }
-    memcpy(m_fido2_req, data, length);
-    if (!fido2_submit(FIDO2_OWNER_HOST, m_fido2_req, length)) {
-        uint8_t ctap_status = 0x01;             /* busy / not accepted */
-        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
-    }
-    fido2_tick();                              /* run the command now */
-    if (fido2_waiting_for_presence(FIDO2_OWNER_HOST)) {
-        /* Do not leave the core slot waiting: the host request/response path
-         * has no KEEPALIVE channel. Ask for the button grant first, then retry. */
-        fido2_cancel(FIDO2_OWNER_HOST);
-        (void)fido2_take_response(FIDO2_OWNER_HOST, m_fido2_resp,
-                                  sizeof(m_fido2_resp), NULL);
-        uint8_t ctap_status = FIDO2_ERR_OPERATION_DENIED;
-        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
-    }
-    size_t rlen = 0;
-    if (!fido2_take_response(FIDO2_OWNER_HOST, m_fido2_resp, sizeof(m_fido2_resp), &rlen)) {
-        uint8_t ctap_status = 0x01;
-        return data_frame_make(cmd, STATUS_SUCCESS, 1, &ctap_status);
-    }
-    return data_frame_make(cmd, STATUS_SUCCESS, (uint16_t)rlen, m_fido2_resp);
-}
-#endif
-
-#if CONFIG_STANDALONE_U2F
-static data_frame_tx_t *cmd_processor_fido2_grant_up(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
-    (void)status; (void)length; (void)data;
-    if (fido2_core_transport_mask() == 0) {
-        uint8_t r = 0x01;
-        return data_frame_make(cmd, STATUS_SUCCESS, 1, &r);
-    }
-
-    /* A host command may arm the mode, but it cannot impersonate the physical
-     * gesture that grants FIDO2 user presence. */
-    standalone_rc_t rc = app_standalone_trigger();
-    bool ok = rc == STANDALONE_RC_OK && fido2_up_granted();
-    uint8_t r = ok ? 0x00 : 0x01;
-    NRF_LOG_INFO("fido2: host UP request -> %u (physical presence required)", (unsigned)ok);
-    return data_frame_make(cmd, STATUS_SUCCESS, 1, &r);
-}
-#endif
 
 static data_frame_tx_t *cmd_processor_get_dfu_settings_version(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
     uint32_t app_v = 0, bl_v = 0;
@@ -5146,11 +5074,6 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_AMIIBO_AUTO_REFRESH_SET,      NULL,                        cmd_processor_amiibo_auto_refresh_set,       NULL                   },
     {    DATA_CMD_AMIIBO_AUTO_REFRESH_GET,      NULL,                        cmd_processor_amiibo_auto_refresh_get,       NULL                   },
     {    DATA_CMD_AMIIBO_VERIFY_SLOT,            NULL,                        cmd_processor_amiibo_verify_slot,            NULL                   },
-#if CONFIG_STANDALONE_U2F
-    {    DATA_CMD_U2F_SET_ATTESTATION,          NULL,                        cmd_processor_u2f_set_attestation,           NULL                   },
-    {    DATA_CMD_FIDO2_CTAP,                    NULL,                        cmd_processor_fido2_ctap,                    NULL                   },
-    {    DATA_CMD_FIDO2_GRANT_UP,                NULL,                        cmd_processor_fido2_grant_up,                NULL                   },
-#endif
     {    DATA_CMD_SET_BLE_NAME,                 NULL,                        cmd_processor_set_ble_name,                  NULL                   },
 
 #if defined(PROJECT_CHAMELEON_ULTRA)

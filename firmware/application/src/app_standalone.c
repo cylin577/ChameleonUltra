@@ -69,9 +69,6 @@
 #ifndef CONFIG_STANDALONE_USB_NET
 #define CONFIG_STANDALONE_USB_NET  1
 #endif
-#ifndef CONFIG_STANDALONE_U2F
-#define CONFIG_STANDALONE_U2F  1
-#endif
 
 /* -------------------------------------------------------------------------
  * FDS record keys (file ID FDS_STANDALONE_FILE_ID defined in fds_ids.h)
@@ -126,6 +123,11 @@ static standalone_mode_t m_result_buf_owner = STANDALONE_MODE_DISABLED;
  * Mode registry
  * ------------------------------------------------------------------------- */
 
+#ifdef STANDALONE_TEST_MODE_IFACE
+/* Test seam: inject a mode that requires physical user presence. */
+extern const standalone_mode_iface_t STANDALONE_TEST_MODE_IFACE;
+#endif
+
 static const standalone_mode_iface_t *const m_modes[] = {
 #if CONFIG_STANDALONE_AUTOCLONE && defined(PROJECT_CHAMELEON_ULTRA)
     &mode_autoclone_iface,
@@ -157,9 +159,6 @@ static const standalone_mode_iface_t *const m_modes[] = {
 #if CONFIG_STANDALONE_GDB_GATEWAY
     &mode_gdb_gateway_iface,
 #endif
-#if CONFIG_STANDALONE_U2F
-    &mode_u2f_iface,
-#endif
 #if CONFIG_STANDALONE_USB_NET
     &mode_usb_net_iface,
 #endif
@@ -174,6 +173,9 @@ static const standalone_mode_iface_t *const m_modes[] = {
 #endif
 #if CONFIG_STANDALONE_ESB_PROMISC
     &mode_esb_promisc_iface,
+#endif
+#ifdef STANDALONE_TEST_MODE_IFACE
+    &STANDALONE_TEST_MODE_IFACE,
 #endif
 };
 
@@ -251,6 +253,11 @@ static void persist_state_load(void) {
         m_ctx.mode  = STANDALONE_MODE_DISABLED;
         m_ctx.flags = 0;
         return;
+    }
+    /* Retired FIDO U2F mode has no registered iface; map stale FDS records
+     * to DISABLED so the host CLI can still parse the reported mode. */
+    if (rec.mode == STANDALONE_MODE_RESERVED_0B) {
+        rec.mode = STANDALONE_MODE_DISABLED;
     }
     m_ctx.mode  = (standalone_mode_t)rec.mode;
     m_ctx.flags = rec.flags;

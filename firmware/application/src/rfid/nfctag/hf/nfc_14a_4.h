@@ -62,7 +62,7 @@ typedef struct __attribute__((packed)) {
     bool     m_chaining_in;   /* mid inbound (reader->card) I-block chain */
     /* Outbound (card->reader) I-block chaining. Off by default: when
      * m_tx_chaining is false the send path is byte-identical to before, so
-     * only a handler that opts in (the CTAP2 mode) is affected. */
+     * only a handler that opts in is affected. */
     bool     m_tx_chaining;   /* response being sent as chained I-blocks */
     uint16_t m_tx_off;        /* bytes of m_resp_buf already sent */
     uint16_t m_tx_frag;       /* max payload per chained I-block */

@@ -74,7 +74,8 @@
 #define DATA_CMD_SET_DFU_SETTINGS_VERSION       (1055)  /* u8 mask (b0 app, b1 bl), u32 app, u32 bl */
 #define DATA_CMD_FDS_LIST                       (1058)  /* -> N * {u16 file_id, u16 key, u16 len_bytes} (big-endian) */
 #define DATA_CMD_FDS_READ                       (1059)  /* u16 file_id, u16 key, u16 offset, u16 len -> record slice (len 0 = max) */
-#define DATA_CMD_U2F_SET_ATTESTATION            (1060)  /* u8[32] att_priv, u8[] att_cert_der -> provision U2F attestation */
+// IDs 1060, 1067 and 1068 belonged to retired commands. Keep them reserved;
+// do not reuse.
 #define DATA_CMD_GET_BOOTLOADER_VERSION         (1061)
 #define DATA_CMD_GET_FREE_MEMORY                (1062)
 // 1063/1064 were DATA_CMD_GET/SET_MULTI_TAP_CONFIG: the version8 "short press
@@ -82,8 +83,6 @@
 // bindings below; the IDs stay reserved.
 #define DATA_CMD_GET_MULTI_TAP_BINDINGS         (1065)  /* -> fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
 #define DATA_CMD_SET_MULTI_TAP_BINDINGS         (1066)  /* <- fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
-#define DATA_CMD_FIDO2_CTAP                     (1067)  /* u8 ctap_cmd + u8[] cbor -> u8 ctap_status + u8[] response (FIDO2 mode) */
-#define DATA_CMD_FIDO2_GRANT_UP                 (1068)  /* no payload -> host UP request/check (cannot replace the physical gesture) */
 #define DATA_CMD_AMIIBO_UPLOAD_KEYS             (1069)  /* upload amiibo retail keys, validate and persist to FDS */
 #define DATA_CMD_AMIIBO_REFRESH_UID             (1070)  /* refresh amiibo UID for a slot */
 #define DATA_CMD_AMIIBO_AUTO_REFRESH_SET        (1071)  /* [u8 enable][u8 persist]; arm RAM-only field-session auto refresh */

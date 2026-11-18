@@ -186,7 +186,7 @@ FAKE_MODE(mode_slot_cycle_iface,  STANDALONE_MODE_SLOT_CYCLE, false)
 FAKE_MODE(mode_emultrace_iface,  STANDALONE_MODE_EMUL_TRACE, false)
 FAKE_MODE(mode_nfc_canary_iface,  STANDALONE_MODE_NFC_CANARY, false)
 FAKE_MODE(mode_gdb_gateway_iface, STANDALONE_MODE_GDB_GATEWAY, false)
-FAKE_MODE(mode_u2f_iface,         STANDALONE_MODE_U2F, true)
+FAKE_MODE(mode_up_gated_iface,    STANDALONE_MODE_RESERVED_0B, true)
 FAKE_MODE(mode_usb_net_iface,     STANDALONE_MODE_USB_NET, false)
 
 /* -------------------------------------------------------------------------
@@ -327,15 +327,15 @@ static void test_stored_size_reads_the_record_header(void) {
 }
 
 /* The host trigger may invoke a normal mode callback, but it must not invoke
- * the physical-presence callback of a mode such as U2F. */
+ * the physical-presence callback of a mode that requires a physical gesture. */
 static void test_host_trigger_cannot_grant_physical_user_presence(void) {
     reset_world();
-    arm(STANDALONE_MODE_U2F);
-    CHECK(app_standalone_get_mode() == STANDALONE_MODE_U2F);
-    CHECK(g_button_calls[STANDALONE_MODE_U2F] == 0);
+    arm(STANDALONE_MODE_RESERVED_0B);
+    CHECK(app_standalone_get_mode() == STANDALONE_MODE_RESERVED_0B);
+    CHECK(g_button_calls[STANDALONE_MODE_RESERVED_0B] == 0);
 
     CHECK(app_standalone_trigger() == STANDALONE_RC_OK);
-    CHECK(g_button_calls[STANDALONE_MODE_U2F] == 0);
+    CHECK(g_button_calls[STANDALONE_MODE_RESERVED_0B] == 0);
 
     /* Modes without a physical-presence requirement keep the host-trigger
      * behavior unchanged. */

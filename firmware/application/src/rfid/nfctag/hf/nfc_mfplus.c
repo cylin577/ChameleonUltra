@@ -529,10 +529,9 @@ static void nfc_tag_mfplus_state_handler(uint8_t *data, uint16_t szBits) {
     nfc_tag_14a_set_frame_delay_max(NFC_MFPLUS_FDT_MAX);
     // nfc_14a delivers the frame length in BITS; the 14a_4 engine (and this
     // handler's own length checks) work in bytes. ISO-DEP frames are
-    // byte-aligned, so divide -- see mode_u2f.c's u2f_cb_state, which does
-    // the same conversion for the same reason; this handler was missing it
-    // entirely (not just off by a constant), which is why every exact
-    // length check here was failing on real hardware.
+    // byte-aligned, so divide -- an earlier version of this handler was
+    // missing that conversion entirely (not just off by a constant), which
+    // is why every exact length check here was failing on real hardware.
     uint16_t szBytes = szBits / 8;
     if (!nfc_tag_14a_4_base_handler(&m_tcl_session_state, data, szBytes)) return;
 
