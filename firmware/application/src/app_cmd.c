@@ -399,6 +399,24 @@ static data_frame_tx_t *cmd_processor_fido2_ctap(uint16_t cmd, uint16_t status, 
 }
 #endif
 
+#if CONFIG_STANDALONE_U2F
+static data_frame_tx_t *cmd_processor_fido2_grant_up(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    (void)status; (void)length; (void)data;
+    if (fido2_core_transport_mask() == 0) {
+        uint8_t r = 0x01;
+        return data_frame_make(cmd, STATUS_SUCCESS, 1, &r);
+    }
+
+    /* A host command may arm the mode, but it cannot impersonate the physical
+     * gesture that grants FIDO2 user presence. */
+    standalone_rc_t rc = app_standalone_trigger();
+    bool ok = rc == STANDALONE_RC_OK && fido2_up_granted();
+    uint8_t r = ok ? 0x00 : 0x01;
+    NRF_LOG_INFO("fido2: host UP request -> %u (physical presence required)", (unsigned)ok);
+    return data_frame_make(cmd, STATUS_SUCCESS, 1, &r);
+}
+#endif
+
 static data_frame_tx_t *cmd_processor_get_dfu_settings_version(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
     uint32_t app_v = 0, bl_v = 0;
     dfuver_get(&app_v, &bl_v);
@@ -5131,6 +5149,7 @@ static cmd_data_map_t m_data_cmd_map[] = {
 #if CONFIG_STANDALONE_U2F
     {    DATA_CMD_U2F_SET_ATTESTATION,          NULL,                        cmd_processor_u2f_set_attestation,           NULL                   },
     {    DATA_CMD_FIDO2_CTAP,                    NULL,                        cmd_processor_fido2_ctap,                    NULL                   },
+    {    DATA_CMD_FIDO2_GRANT_UP,                NULL,                        cmd_processor_fido2_grant_up,                NULL                   },
 #endif
     {    DATA_CMD_SET_BLE_NAME,                 NULL,                        cmd_processor_set_ble_name,                  NULL                   },
 

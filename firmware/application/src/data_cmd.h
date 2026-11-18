@@ -83,6 +83,7 @@
 #define DATA_CMD_GET_MULTI_TAP_BINDINGS         (1065)  /* -> fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
 #define DATA_CMD_SET_MULTI_TAP_BINDINGS         (1066)  /* <- fn[8] (A2..A5,B2..B5) + u16 threshold_ms (LE) */
 #define DATA_CMD_FIDO2_CTAP                     (1067)  /* u8 ctap_cmd + u8[] cbor -> u8 ctap_status + u8[] response (FIDO2 mode) */
+#define DATA_CMD_FIDO2_GRANT_UP                 (1068)  /* no payload -> host UP request/check (cannot replace the physical gesture) */
 #define DATA_CMD_AMIIBO_UPLOAD_KEYS             (1069)  /* upload amiibo retail keys, validate and persist to FDS */
 #define DATA_CMD_AMIIBO_REFRESH_UID             (1070)  /* refresh amiibo UID for a slot */
 #define DATA_CMD_AMIIBO_AUTO_REFRESH_SET        (1071)  /* [u8 enable][u8 persist]; arm RAM-only field-session auto refresh */

@@ -73,6 +73,13 @@ typedef struct {
     void (*store_counter)(uint32_t ctr);
     bool (*random_bytes)(uint8_t *dst, size_t len);
     uint32_t (*now_ms)(void);
+    /* Resident (discoverable) credential store. The platform owns persistence.
+     * All three callbacks are required for resident-credential support.
+     * Only the rp id and the 32-byte nonce are stored; the private key and the
+     * 64-byte credential id are re-derived from the master key. */
+    bool (*resident_store)(const uint8_t *rp_id, uint16_t rp_id_len, const uint8_t *nonce32);
+    bool (*resident_find)(const uint8_t *rp_id, uint16_t rp_id_len, uint8_t *nonce32_out);
+    bool (*resident_count)(uint16_t *count_out);
 } fido2_core_io_t;
 
 /* Register the platform hooks. Must be called before fido2_core_arm(). */
@@ -98,6 +105,7 @@ bool     fido2_up_granted(void);
 bool     fido2_is_processing(void);
 bool     fido2_has_pending_request(void);
 bool     fido2_response_ready_any(void);
+uint8_t  fido2_core_state(void);
 uint8_t  fido2_last_response_status(void);
 
 /* Cancel the queued request for `owner`. The owner receives status

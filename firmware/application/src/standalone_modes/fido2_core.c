@@ -14,6 +14,9 @@
 #include <string.h>
 
 #include "fido2_core.h"
+#if !defined(FIDO2_HOST_BUILD)
+#include "nrf_log.h"
+#endif
 #if defined(FIDO2_HOST_BUILD)
 #include "uECC.h"
 #else
@@ -342,6 +345,12 @@ static bool rng_bytes(uint8_t *dst, size_t len) {
     return s_io && s_io->random_bytes && s_io->random_bytes(dst, len);
 }
 
+/* Resident credentials are supported only as a complete platform contract. */
+static bool resident_supported(void) {
+    return s_io && s_io->resident_store &&
+           s_io->resident_find && s_io->resident_count;
+}
+
 /* ===================================================================== */
 /*  key wrapping                                                          */
 /* ===================================================================== */
@@ -384,7 +393,7 @@ static size_t ctap_status(uint8_t *out, uint8_t status) {
 /* authenticatorGetInfo — data-driven so the transports list follows the
  * armed transport mask:
  *   {1:["FIDO_2_0","U2F_V2"], 3:h'<16 zero bytes aaguid>',
- *    4:{"rk":false,"up":true,"clientPin":false,"makeCredUvNotRqd":true},
+ *    4:{"rk":<resident support>,"up":true,"clientPin":false,"makeCredUvNotRqd":true},
  *    9:["usb"|"nfc"|"ble" — only the transports in the armed mask]}
  * "none" attestation => the AAGUID is all zeros. */
 static size_t ctap_get_info(uint8_t *out, size_t out_max) {
@@ -404,7 +413,7 @@ static size_t ctap_get_info(uint8_t *out, size_t out_max) {
 
     cbw_head(&w, 0, 4);                       /* 4: options */
     cbw_head(&w, 5, 4);
-    cbw_text(&w, "rk");            cbw_byte(&w, 0xF4);   /* false */
+    cbw_text(&w, "rk");            cbw_byte(&w, resident_supported() ? 0xF5 : 0xF4);
     cbw_text(&w, "up");            cbw_byte(&w, 0xF5);   /* true  */
     cbw_text(&w, "clientPin");     cbw_byte(&w, 0xF4);   /* false */
     cbw_text(&w, "makeCredUvNotRqd"); cbw_byte(&w, 0xF5);
@@ -475,7 +484,7 @@ static uint8_t parse_make_credential(const uint8_t *d, size_t len,
             }
         } else if (key == 6) {                           /* extensions (not supported) */
             if (!cbor_skip(&c)) return FIDO2_ERR_INVALID_CBOR;
-        } else if (key == 7) {                           /* options: "rk" is unsupported */
+        } else if (key == 7) {                           /* options */
             uint8_t om; uint64_t on;
             if (!cbor_head(&c, &om, &on) || om != 5) return FIDO2_ERR_INVALID_CBOR;
             for (uint64_t j = 0; j < on; j++) {
@@ -491,7 +500,7 @@ static uint8_t parse_make_credential(const uint8_t *d, size_t len,
     }
     if (!p->cdh || p->cdh_len != 32 || !p->rpid) return FIDO2_ERR_MISSING_PARAMETER;
     if (!p->have_es256) return FIDO2_ERR_UNSUPPORTED_ALGORITHM;
-    if (p->rk) return FIDO2_ERR_UNSUPPORTED_OPTION;
+    if (p->rk && !resident_supported()) return FIDO2_ERR_UNSUPPORTED_OPTION;
     return FIDO2_OK;
 }
 
@@ -500,7 +509,16 @@ static uint8_t parse_make_credential(const uint8_t *d, size_t len,
 static size_t ctap_make_credential(const uint8_t *d, size_t len, uint8_t *out, size_t out_max) {
     make_credential_params_t p;
     uint8_t parse_status = parse_make_credential(d, len, &p);
-    if (parse_status != FIDO2_OK) return ctap_status(out, parse_status);
+    if (parse_status != FIDO2_OK) {
+#if !defined(FIDO2_HOST_BUILD)
+        NRF_LOG_INFO("fido2: make-credential parse failed status=0x%02x", parse_status);
+#endif
+        return ctap_status(out, parse_status);
+    }
+#if !defined(FIDO2_HOST_BUILD)
+    NRF_LOG_INFO("fido2: make-credential rp=%.*s len=%u", (int)p.rpid_len, (const char *)p.rpid, (unsigned)p.rpid_len);
+    if (p.rk) NRF_LOG_INFO("fido2: make-credential rk requested rp=%.*s", (int)p.rpid_len, (const char *)p.rpid);
+#endif
 
     uint8_t rpIdHash[32];
     fido2_sha256(p.rpid, p.rpid_len, rpIdHash);
@@ -533,6 +551,24 @@ static size_t ctap_make_credential(const uint8_t *d, size_t len, uint8_t *out, s
     fido2_derive_mac(rpIdHash, nonce, mac);
     uint8_t credId[FIDO2_CRED_ID_LEN]; memcpy(credId, nonce, 32); memcpy(credId + 32, mac, 32);
 
+    if (p.rk) {
+        if (!s_io || !s_io->resident_store) {
+#if !defined(FIDO2_HOST_BUILD)
+            NRF_LOG_INFO("fido2: resident credential store unavailable rp=%.*s", (int)p.rpid_len, (const char *)p.rpid);
+#endif
+            return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
+        }
+        if (!s_io->resident_store(p.rpid, (uint16_t)p.rpid_len, nonce)) {
+#if !defined(FIDO2_HOST_BUILD)
+            NRF_LOG_INFO("fido2: resident credential store failed rp=%.*s", (int)p.rpid_len, (const char *)p.rpid);
+#endif
+            return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
+        }
+#if !defined(FIDO2_HOST_BUILD)
+        NRF_LOG_INFO("fido2: resident credential stored rp=%.*s", (int)p.rpid_len, (const char *)p.rpid);
+#endif
+    }
+
     uint8_t sc4[4]; sc4_of(ctr_next(), sc4);
 
     /* authData = rpIdHash | flags(UP|AT) | signCount | attestedCredentialData */
@@ -553,6 +589,9 @@ static size_t ctap_make_credential(const uint8_t *d, size_t len, uint8_t *out, s
     cbw_head(&w, 0, 2); cbw_bytes(&w, ad, ap);
     cbw_head(&w, 0, 3); cbw_head(&w, 5, 0);            /* attStmt: {} */
     if (w.ovf) return ctap_status(out, FIDO2_ERR_INVALID_LENGTH);
+#if !defined(FIDO2_HOST_BUILD)
+    NRF_LOG_INFO("fido2: make-credential success");
+#endif
     out[0] = FIDO2_OK;
     return 1 + w.len;
 }
@@ -565,6 +604,7 @@ typedef struct {
     const uint8_t *cdh;
     uint64_t rpid_len;
     uint64_t cdh_len;
+    bool resident;
     uint8_t cred[FIDO2_CRED_ID_LEN];
 } get_assertion_params_t;
 
@@ -592,7 +632,10 @@ static uint8_t parse_get_assertion(const uint8_t *d, size_t len,
         } else if (!cbor_skip(&c)) return FIDO2_ERR_INVALID_CBOR;
     }
     if (!p->rpid || !p->cdh || p->cdh_len != 32) return FIDO2_ERR_MISSING_PARAMETER;
-    if (!allow_items) return FIDO2_ERR_NO_CREDENTIALS;
+    if (!allow_items || allow_count == 0) {
+        p->resident = true;
+        return FIDO2_OK;
+    }
 
     uint8_t rp_id_hash[32];
     fido2_sha256(p->rpid, p->rpid_len, rp_id_hash);
@@ -625,13 +668,23 @@ static uint8_t parse_get_assertion(const uint8_t *d, size_t len,
 static size_t ctap_get_assertion(const uint8_t *d, size_t len, uint8_t *out, size_t out_max) {
     get_assertion_params_t p;
     uint8_t parse_status = parse_get_assertion(d, len, &p);
-    if (parse_status != FIDO2_OK) return ctap_status(out, parse_status);
+    if (parse_status != FIDO2_OK) {
+#if !defined(FIDO2_HOST_BUILD)
+        NRF_LOG_INFO("fido2: get-assertion parse failed status=0x%02x", parse_status);
+#endif
+        return ctap_status(out, parse_status);
+    }
 
     uint8_t rp_id_hash[32];
     fido2_sha256(p.rpid, p.rpid_len, rp_id_hash);
     const uint8_t *nonce = p.cred, *mac = p.cred + 32;
     uint8_t want[32]; fido2_derive_mac(rp_id_hash, nonce, want);
-    if (memcmp(want, mac, 32) != 0) return ctap_status(out, FIDO2_ERR_NO_CREDENTIALS);
+    if (memcmp(want, mac, 32) != 0) {
+#if !defined(FIDO2_HOST_BUILD)
+        NRF_LOG_INFO("fido2: get-assertion credential not ours");
+#endif
+        return ctap_status(out, FIDO2_ERR_NO_CREDENTIALS);
+    }
     uint8_t priv[32]; fido2_derive_priv(rp_id_hash, nonce, priv);
 
     uint8_t sc4[4]; sc4_of(ctr_next(), sc4);
@@ -642,7 +695,12 @@ static size_t ctap_get_assertion(const uint8_t *d, size_t len, uint8_t *out, siz
     uint8_t h[32]; fido2_sha256(buf, 69, h);
     uint8_t sig[72];
     uint16_t sl = fido2_sign_der(priv, h, sig, sizeof sig);
-    if (!sl) return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
+    if (!sl) {
+#if !defined(FIDO2_HOST_BUILD)
+        NRF_LOG_INFO("fido2: get-assertion sign failed");
+#endif
+        return ctap_status(out, FIDO2_ERR_OPERATION_DENIED);
+    }
 
     /* response {1:{id,type}, 2:authData, 3:signature} */
     if (out_max < 2) return ctap_status(out, FIDO2_ERR_INVALID_LENGTH);
@@ -654,6 +712,9 @@ static size_t ctap_get_assertion(const uint8_t *d, size_t len, uint8_t *out, siz
     cbw_head(&w, 0, 2); cbw_bytes(&w, ad, 37);
     cbw_head(&w, 0, 3); cbw_bytes(&w, sig, sl);
     if (w.ovf) return ctap_status(out, FIDO2_ERR_INVALID_LENGTH);
+#if !defined(FIDO2_HOST_BUILD)
+    NRF_LOG_INFO("fido2: get-assertion success");
+#endif
     out[0] = FIDO2_OK;
     return 1 + w.len;
 }
@@ -879,6 +940,10 @@ bool fido2_has_pending_request(void) {
 
 bool fido2_response_ready_any(void) {
     return s_state == FIDO2_ST_DONE;
+}
+
+uint8_t fido2_core_state(void) {
+    return s_state;
 }
 
 uint8_t fido2_last_response_status(void) {

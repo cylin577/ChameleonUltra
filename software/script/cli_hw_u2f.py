@@ -191,6 +191,27 @@ class HWU2fGetInfo(DeviceRequiredUnit):
     def on_exec(self, args: argparse.Namespace):
         _run_ctap(self, bytes([CTAP_GET_INFO]))
 
+@hw_u2f.command("trigger-up")
+class HWU2fTriggerUp(DeviceRequiredUnit):
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = ("Request or check user presence for the armed FIDO2 "
+                              "authenticator. A physical button press is still required; "
+                              "this command cannot grant presence.")
+        return parser
+
+    def on_exec(self, args: argparse.Namespace):
+        try:
+            response = self.cmd.fido2_grant_up()
+            if response == b"\x00":
+                print(" - User presence is granted (5 s window).")
+            elif response == b"\x01":
+                print(" - User presence is not granted; press A or B on the device.")
+            else:
+                print(f" - Unexpected user-presence response: {response!r}")
+        except Exception as e:
+            print(f" - User-presence request failed: {e}")
+
 
 @hw_u2f.command("ctap")
 class HWU2fCtap(DeviceRequiredUnit):

@@ -526,6 +526,36 @@ static void test_user_presence_and_cancel(void) {
     CHECK(len == 1 && out[0] == FIDO2_ERR_KEEPALIVE_CANCEL);
 }
 
+static void test_denied_user_presence_blocks_operation(void) {
+    fido2_core_arm(FIDO2_TRANSPORT_USB);
+    uint8_t cdh[32];
+    memset(cdh, 0x44, sizeof cdh);
+    uint8_t req[512];
+    size_t rlen = build_make_cred(req, cdh);
+    uint8_t cmd[512] = { FIDO2_CMD_MAKE_CREDENTIAL, 0x00 };
+    memcpy(cmd + 1, req, rlen);
+
+    CHECK(fido2_submit(FIDO2_OWNER_USB, cmd, rlen + 1));
+    fido2_tick();
+    CHECK(fido2_waiting_for_presence(FIDO2_OWNER_USB));
+    CHECK(!fido2_up_granted());
+    CHECK(!fido2_response_ready(FIDO2_OWNER_USB));
+    CHECK(!fido2_is_processing());
+
+    /* A denied presence check must leave the operation blocked on another
+     * tick instead of processing it without the UP flag. */
+    fido2_tick();
+    CHECK(fido2_waiting_for_presence(FIDO2_OWNER_USB));
+    CHECK(!fido2_response_ready(FIDO2_OWNER_USB));
+    CHECK(!fido2_is_processing());
+
+    CHECK(fido2_cancel(FIDO2_OWNER_USB));
+    uint8_t out[256];
+    size_t len = 0;
+    CHECK(fido2_take_response(FIDO2_OWNER_USB, out, sizeof out, &len));
+    CHECK(len == 1 && out[0] == FIDO2_ERR_KEEPALIVE_CANCEL);
+}
+
 static void test_user_presence_timeout(void) {
     fido2_core_arm(FIDO2_TRANSPORT_USB);
     uint8_t cdh[32];
@@ -626,6 +656,7 @@ int main(void) {
     test_bad_cbor();
     test_missing_client_data_hash();
     test_user_presence_and_cancel();
+    test_denied_user_presence_blocks_operation();
     test_user_presence_timeout();
     test_algorithm_and_option();
     test_master_key_store_failure();

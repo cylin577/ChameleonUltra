@@ -93,6 +93,7 @@ class Command(enum.IntEnum):
     FDS_READ = 1059
     U2F_SET_ATTESTATION = 1060
     FIDO2_CTAP = 1067
+    FIDO2_GRANT_UP = 1068
 
     HF14A_SCAN = 2000
     MF1_DETECT_SUPPORT = 2001

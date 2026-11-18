@@ -132,9 +132,10 @@ static uint32_t g_fake_shared[FAKE_BUF_WORDS];
 static int      g_ensure_calls[STANDALONE_MODE__COUNT];
 static int      g_read_calls[STANDALONE_MODE__COUNT];
 static int      g_clear_calls[STANDALONE_MODE__COUNT];
+static int      g_button_calls[STANDALONE_MODE__COUNT];
 static size_t   g_fake_size[STANDALONE_MODE__COUNT];
 
-#define FAKE_MODE(SYM, ID)                                                    \
+#define FAKE_MODE(SYM, ID, REQUIRES_UP)                                       \
     static void fake_ensure_##ID(void) {                                      \
         g_ensure_calls[ID]++;                                                 \
         size_t n = 0;                                                         \
@@ -157,6 +158,11 @@ static size_t   g_fake_size[STANDALONE_MODE__COUNT];
         g_clear_calls[ID]++;              /* clearing never loads */          \
         g_fake_size[ID] = 0;                                                 \
     }                                                                        \
+    static standalone_rc_t fake_button_##ID(standalone_button_evt_t evt) {   \
+        (void)evt;                                                            \
+        g_button_calls[ID]++;                                                \
+        return STANDALONE_RC_OK;                                              \
+    }                                                                        \
     static standalone_rc_t fake_enter_##ID(const uint8_t *cfg, size_t len) {  \
         (void)cfg; (void)len;                                                 \
         return STANDALONE_RC_OK;                                              \
@@ -166,20 +172,22 @@ static size_t   g_fake_size[STANDALONE_MODE__COUNT];
         .id              = ID,                                                \
         .name            = #ID,                                               \
         .wants_tick      = false,                                             \
+        .requires_physical_user_presence = REQUIRES_UP,                      \
         .on_enter        = fake_enter_##ID,                                   \
         .on_exit         = fake_exit_##ID,                                    \
+        .on_button       = fake_button_##ID,                                  \
         .get_result_size = fake_get_size_##ID,                                \
         .read_result     = fake_read_##ID,                                    \
         .clear_result    = fake_clear_##ID,                                   \
         .ensure_loaded   = fake_ensure_##ID,                                  \
     };
 
-FAKE_MODE(mode_slot_cycle_iface,  STANDALONE_MODE_SLOT_CYCLE)
-FAKE_MODE(mode_emultrace_iface,  STANDALONE_MODE_EMUL_TRACE)
-FAKE_MODE(mode_nfc_canary_iface,  STANDALONE_MODE_NFC_CANARY)
-FAKE_MODE(mode_gdb_gateway_iface, STANDALONE_MODE_GDB_GATEWAY)
-FAKE_MODE(mode_u2f_iface,         STANDALONE_MODE_U2F)
-FAKE_MODE(mode_usb_net_iface,     STANDALONE_MODE_USB_NET)
+FAKE_MODE(mode_slot_cycle_iface,  STANDALONE_MODE_SLOT_CYCLE, false)
+FAKE_MODE(mode_emultrace_iface,  STANDALONE_MODE_EMUL_TRACE, false)
+FAKE_MODE(mode_nfc_canary_iface,  STANDALONE_MODE_NFC_CANARY, false)
+FAKE_MODE(mode_gdb_gateway_iface, STANDALONE_MODE_GDB_GATEWAY, false)
+FAKE_MODE(mode_u2f_iface,         STANDALONE_MODE_U2F, true)
+FAKE_MODE(mode_usb_net_iface,     STANDALONE_MODE_USB_NET, false)
 
 /* -------------------------------------------------------------------------
  * Helpers
@@ -191,6 +199,7 @@ static void reset_world(void) {
     memset(g_ensure_calls, 0, sizeof(g_ensure_calls));
     memset(g_read_calls, 0, sizeof(g_read_calls));
     memset(g_clear_calls, 0, sizeof(g_clear_calls));
+    memset(g_button_calls, 0, sizeof(g_button_calls));
     memset(g_fake_size, 0, sizeof(g_fake_size));
     app_standalone_init();
 }
@@ -317,6 +326,25 @@ static void test_stored_size_reads_the_record_header(void) {
     CHECK(app_standalone_get_stored_size(STANDALONE_MODE_SLOT_CYCLE) == 0);
 }
 
+/* The host trigger may invoke a normal mode callback, but it must not invoke
+ * the physical-presence callback of a mode such as U2F. */
+static void test_host_trigger_cannot_grant_physical_user_presence(void) {
+    reset_world();
+    arm(STANDALONE_MODE_U2F);
+    CHECK(app_standalone_get_mode() == STANDALONE_MODE_U2F);
+    CHECK(g_button_calls[STANDALONE_MODE_U2F] == 0);
+
+    CHECK(app_standalone_trigger() == STANDALONE_RC_OK);
+    CHECK(g_button_calls[STANDALONE_MODE_U2F] == 0);
+
+    /* Modes without a physical-presence requirement keep the host-trigger
+     * behavior unchanged. */
+    reset_world();
+    arm(STANDALONE_MODE_SLOT_CYCLE);
+    CHECK(app_standalone_trigger() == STANDALONE_RC_OK);
+    CHECK(g_button_calls[STANDALONE_MODE_SLOT_CYCLE] == 1);
+}
+
 int main(void) {
     test_get_sizes_never_loads_a_mode();
     test_get_sizes_never_loads_while_another_mode_is_armed();
@@ -326,6 +354,7 @@ int main(void) {
     test_read_when_disarmed_claims_the_buffer();
     test_clear_does_not_load();
     test_stored_size_reads_the_record_header();
+    test_host_trigger_cannot_grant_physical_user_presence();
 
     printf("%s: %d checks, %d failures\n", g_fail ? "FAILED" : "ok",
            g_checks, g_fail);

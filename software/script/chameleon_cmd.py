@@ -2397,6 +2397,18 @@ class ChameleonCMD:
         return self.device.send_cmd_sync(Command.U2F_SET_ATTESTATION, priv + cert)
 
     @expect_response(Status.SUCCESS)
+    def fido2_grant_up(self) -> bytes:
+        """Request or check user presence for the armed FIDO2 authenticator.
+
+        Returns the firmware payload: 0x00 means presence is granted and 0x01
+        means it is not. This command cannot grant presence without a physical
+        button press.
+        """
+        resp = self.device.send_cmd_sync(Command.FIDO2_GRANT_UP, b"")
+        resp.parsed = resp.data
+        return resp
+
+    @expect_response(Status.SUCCESS)
     def fido2_ctap(self, ctap_cmd: bytes) -> bytes:
         """Run a CTAP2 command on the device's FIDO2 authenticator.
 

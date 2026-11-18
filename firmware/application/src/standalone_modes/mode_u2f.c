@@ -314,6 +314,8 @@ static uint16_t u2f_process(const uint8_t *a, uint16_t n){
      * core is done (the reader waits on S(WTX) meanwhile). */
     if (cla == 0x80 && ins == NFCCTAP_MSG) {
         m_ctap2_resp = true;                 /* layer-4 chained response */
+        /* A physical NFC tap is the presence gesture for the phone path. */
+        (void)fido2_grant_user_presence();
         if (!body || lc < 1) {
             m_big[0] = CTAP1_ERR_INVALID_LENGTH;
             m_big_len = put_sw(m_big, 1, SW_NO_ERROR);
@@ -599,6 +601,7 @@ static standalone_rc_t on_tick(uint32_t now_ms){
     /* Detect state transitions. */
     if (was_pending && response_ready) {
         /* Completed this tick. */
+        NRF_LOG_INFO("u2f: ctap response status=0x%02x state=%u", fido2_last_response_status(), (unsigned)fido2_core_state());
         if (fido2_last_response_status() == 0x00) {
             m_led_state = 3;          /* green breathing */
             m_led_timer = 200;         /* 1 s at 5 ms/tick */
