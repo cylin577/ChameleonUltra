@@ -50,10 +50,11 @@ data_frame_tx_t *data_frame_make(uint16_t cmd, uint16_t status, uint16_t data_le
         return NULL;
     }
 
-    // NRF_LOG_INFO("TX Data frame: cmd = 0x%04x (%i), status = 0x%04x, length = %d%s", cmd, cmd, status, data_length, data_length > 0 ? ", data =" : "");
-    // if (data_length > 0) {
-    //     NRF_LOG_HEXDUMP_INFO(data, data_length);
-    // }
+    NRF_LOG_DEBUG("TX Data frame: cmd = 0x%04x (%i), status = 0x%04x, length = %d",
+                  cmd, cmd, status, data_length);
+    if (data_length > 0) {
+        NRF_LOG_HEXDUMP_DEBUG(data, data_length);
+    }
 
     netdata_frame_postamble_t *tx_post = (netdata_frame_postamble_t *)((uint8_t *)&m_netdata_frame_tx_buf + sizeof(netdata_frame_preamble_t) + data_length);
     // sof
@@ -92,6 +93,9 @@ void data_frame_reset(void) {
  * @param length:The length of the receiving byte array
  */
 void data_frame_receive(uint8_t *data, uint16_t length) {
+    if (length == 0) {
+        return;
+    }
     // buffer wait process
     if (m_data_completed) {
         NRF_LOG_ERROR("Data frame wait process.");
@@ -148,10 +152,11 @@ void data_frame_receive(uint8_t *data, uint16_t length) {
                     // and we are receive completed
                     m_data_buffer = m_data_len > 0 ? (uint8_t *)&m_netdata_frame_rx_buf.data : NULL;
                     m_data_completed = true;
-                    // NRF_LOG_INFO("RX Data frame: cmd = 0x%04x (%i), status = 0x%04x, length = %d%s", m_data_cmd, m_data_cmd, m_data_status, m_data_len, m_data_len > 0 ? ", data =" : "");
-                    // if (m_data_len > 0) {
-                    //     NRF_LOG_HEXDUMP_INFO(m_data_buffer, m_data_len);
-                    // }
+                    NRF_LOG_DEBUG("RX Data frame: cmd = 0x%04x (%i), status = 0x%04x, length = %d",
+                                  m_data_cmd, m_data_cmd, m_data_status, m_data_len);
+                    if (m_data_len > 0) {
+                        NRF_LOG_HEXDUMP_DEBUG(m_data_buffer, m_data_len);
+                    }
                 } else {
                     // data frame lrc error
                     NRF_LOG_ERROR("Data frame finally lrc error.");

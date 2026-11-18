@@ -97,6 +97,10 @@ SRC_FILES += \
   $(PROJ_DIR)/rfid/nfctag/hf/nfc_14a_4.c \
   $(PROJ_DIR)/rfid/nfctag/hf/nfc_mf1.c \
   $(PROJ_DIR)/rfid/nfctag/hf/nfc_mf0_ntag.c \
+  $(PROJ_DIR)/rfid/nfctag/hf/nfc_amiibo_uid_refresh.c \
+  $(PROJ_DIR)/rfid/nfctag/hf/nfc_amiibo_refresh_slot.c \
+  $(PROJ_DIR)/rfid/nfctag/hf/nfc_amiibo_auto_refresh.c \
+  $(PROJ_DIR)/rfid/nfctag/hf/nfc_amiibo_keys_store.c \
   $(PROJ_DIR)/rfid/nfctag/hf/nfc_seos.c \
   $(PROJ_DIR)/rfid/nfctag/hf/nfc_st25ta.c \
   $(PROJ_DIR)/rfid/nfctag/lf/lf_tag_em.c \

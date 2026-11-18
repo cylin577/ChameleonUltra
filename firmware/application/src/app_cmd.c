@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <string.h>
 #include "fds_util.h"
 #include "bsp_time.h"
@@ -7,6 +8,7 @@
 #include "ble_main.h"
 #include "syssleep.h"
 #include "hex_utils.h"
+#include "crc_utils.h"
 #include "data_cmd.h"
 #include "app_cmd.h"
 #include "app_status.h"
@@ -34,6 +36,11 @@
 #include "parity.h"
 #endif
 #include "nfc_14a.h"
+#include "nfc_amiibo_uid_refresh.h"
+#include "nfc_amiibo_keys_store.h"
+#include "nfc_amiibo_refresh_slot.h"
+#include "nfc_amiibo_auto_refresh.h"
+#include "nrf_drv_rng.h"
 
 /* Forward declarations for functions added to nfc_14a.c/h in this PR.
  * These are declared here to avoid build failure if nfc_14a.h is not yet
@@ -2314,6 +2321,168 @@ static data_frame_tx_t *cmd_processor_mf1_read_emu_block_data(uint16_t cmd, uint
         memcpy(&result_buffer[i], info->memory[j], NFC_TAG_MF1_DATA_SIZE);
     }
     return data_frame_make(cmd, STATUS_SUCCESS, result_length, result_buffer);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_upload_keys(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    if (length == 0) {
+        bool cleared = nfc_amiibo_keys_store_clear();
+        return data_frame_make(cmd, cleared ? STATUS_SUCCESS : STATUS_FLASH_WRITE_FAIL, 0, NULL);
+    }
+    if (length != 2 * NFC_AMIIBO_UID_REFRESH_RETAIL_KEY_SIZE || data == NULL) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    nfc_amiibo_uid_refresh_status_t result =
+        nfc_amiibo_uid_refresh_upload_retail_keys(length, data);
+    if (result == NFC_AMIIBO_UID_REFRESH_INVALID_ARGUMENT) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+    if (result == NFC_AMIIBO_UID_REFRESH_INVALID_RETAIL_KEYS) {
+        return data_frame_make(cmd, STATUS_AMIIBO_KEYS_INVALID, 0, NULL);
+    }
+    if (result != NFC_AMIIBO_UID_REFRESH_OK) {
+        return data_frame_make(cmd, STATUS_AMIIBO_KEYS_FAIL, 0, NULL);
+    }
+    if (!nfc_amiibo_keys_store_save(data)) {
+        return data_frame_make(cmd, STATUS_FLASH_WRITE_FAIL, 0, NULL);
+    }
+    return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_refresh_uid(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    bool persist = false;
+    if (!nfc_amiibo_uid_refresh_parse_request(length, data, &persist)) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    uint8_t old_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE];
+    uint8_t new_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE];
+    uint16_t status_code = nfc_amiibo_refresh_slot(persist, old_uid, new_uid);
+    if (status_code != STATUS_SUCCESS) {
+        return data_frame_make(cmd, status_code, 0, NULL);
+    }
+
+    uint8_t response[2 * NFC_AMIIBO_UID_REFRESH_UID_SIZE];
+    memcpy(response, old_uid, sizeof(old_uid));
+    memcpy(response + sizeof(old_uid), new_uid, sizeof(new_uid));
+    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(response), response);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_verify_slot(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    (void)status; (void)data;
+    if (length != 0) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    uint8_t uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE] = { 0 };
+    uint8_t reason = NFC_AMIIBO_VERIFY_REASON_OTHER;
+    uint16_t status_code = nfc_amiibo_verify_slot(uid, &reason);
+    if (status_code != STATUS_SUCCESS) {
+        return data_frame_make(cmd, status_code, 0, NULL);
+    }
+
+    uint8_t response[NFC_AMIIBO_VERIFY_RESPONSE_SIZE];
+    response[0] = (reason == NFC_AMIIBO_VERIFY_REASON_VALID) ? 1 : 0;
+    response[1] = reason;
+    memcpy(&response[2], uid, sizeof(uid));
+    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(response), response);
+}
+
+/* ---- On-device field-session auto refresh (CMD 1071/1072) --------------
+ * The detector only records a status; the host wants the firmware STATUS_*
+ * code plus both UIDs, so the hook keeps its own snapshot. The hook runs in
+ * the main loop (never in the NFCT ISR), so calling the shared refresh core
+ * here is safe even though it uses RNG/FDS. */
+static uint8_t m_auto_old_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE];
+static uint8_t m_auto_new_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE];
+static uint16_t m_auto_last_status = STATUS_SUCCESS;
+static bool m_auto_last_ok;
+
+static nfc_amiibo_uid_refresh_status_t auto_refresh_hook(
+    uint8_t slot, bool persist, uint8_t uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE]) {
+    uint8_t old_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE] = { 0 };
+    uint8_t new_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE] = { 0 };
+
+    /* Never refresh a slot other than the one that was armed. */
+    if (tag_emulation_get_slot() != slot) {
+        nfc_amiibo_auto_refresh_disarm();
+        m_auto_last_status = STATUS_INVALID_SLOT_TYPE;
+        m_auto_last_ok = false;
+        memset(uid, 0, NFC_AMIIBO_UID_REFRESH_UID_SIZE);
+        return NFC_AMIIBO_UID_REFRESH_INVALID_ARGUMENT;
+    }
+
+    uint16_t status = nfc_amiibo_refresh_slot(persist, old_uid, new_uid);
+    m_auto_last_status = status;
+    m_auto_last_ok = (status == STATUS_SUCCESS);
+    memcpy(m_auto_old_uid, old_uid, sizeof(old_uid));
+    memcpy(m_auto_new_uid, new_uid, sizeof(new_uid));
+    /* The detector stores this as the UID actually written. */
+    memcpy(uid, new_uid, sizeof(new_uid));
+
+    switch (status) {
+        case STATUS_SUCCESS:                 return NFC_AMIIBO_UID_REFRESH_OK;
+        case STATUS_AMIIBO_KEYS_MISSING:     return NFC_AMIIBO_UID_REFRESH_RETAIL_KEYS_MISSING;
+        case STATUS_AMIIBO_KEYS_INVALID:     return NFC_AMIIBO_UID_REFRESH_INVALID_RETAIL_KEYS;
+        case STATUS_AMIIBO_UID_INVALID:      return NFC_AMIIBO_UID_REFRESH_INVALID_UID;
+        case STATUS_INVALID_SLOT_TYPE:
+        case STATUS_DEVICE_MODE_ERROR:       return NFC_AMIIBO_UID_REFRESH_INVALID_ARGUMENT;
+        default:                             return NFC_AMIIBO_UID_REFRESH_CRYPTO_ERROR;
+    }
+}
+
+void nfc_amiibo_auto_refresh_bind(void) {
+    nfc_amiibo_auto_refresh_set_refresh_fn(auto_refresh_hook);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_set(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    (void)status;
+    if (length != 2 || data == NULL || (data[0] & ~1u) != 0 || (data[1] & ~1u) != 0) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+    bool enable = data[0] != 0;
+
+    if (!enable) {
+        nfc_amiibo_auto_refresh_disarm();
+        return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
+    }
+
+    uint8_t active_slot = tag_emulation_get_slot();
+    tag_slot_specific_type_t tag_types;
+    tag_emulation_get_specific_types_by_slot(active_slot, &tag_types);
+    if (tag_types.tag_hf != TAG_TYPE_NTAG_215) {
+        return data_frame_make(cmd, STATUS_INVALID_SLOT_TYPE, 0, NULL);
+    }
+
+    /* init() preserves the injected hook while zeroing counters/last state. */
+    nfc_amiibo_auto_refresh_init();
+    memset(m_auto_old_uid, 0, sizeof(m_auto_old_uid));
+    memset(m_auto_new_uid, 0, sizeof(m_auto_new_uid));
+    m_auto_last_status = STATUS_SUCCESS;
+    m_auto_last_ok = false;
+    nfc_amiibo_auto_refresh_arm(active_slot, data[1] != 0);
+    return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_get(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    (void)status; (void)data;
+    if (length != 0) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+
+    /* 21-byte snapshot; byte 20 packs activity: bit 7 = PWD_AUTH seen, low 7 bits = min(READ/FAST_READ count, 127). */
+    uint8_t response[21] = { 0 };
+    uint32_t count = nfc_amiibo_auto_refresh_scan_count();
+    response[0] = nfc_amiibo_auto_refresh_is_armed() ? 1 : 0;
+    response[1] = nfc_amiibo_auto_refresh_slot();
+    response[2] = (uint8_t)(count > 255u ? 255u : count);
+    response[3] = m_auto_last_ok ? 1 : 0;
+    response[4] = (uint8_t)(m_auto_last_status & 0xFFu);
+    response[5] = (uint8_t)(m_auto_last_status >> 8);
+    memcpy(response + 6, m_auto_old_uid, sizeof(m_auto_old_uid));
+    memcpy(response + 13, m_auto_new_uid, sizeof(m_auto_new_uid));
+    response[20] = nfc_amiibo_auto_refresh_activity_byte();
+    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(response), response);
 }
 
 static data_frame_tx_t *cmd_processor_mf0_ntag_write_emu_page_data(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
@@ -4954,6 +5123,11 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_SET_DFU_SETTINGS_VERSION,     NULL,                        cmd_processor_set_dfu_settings_version,      NULL                   },
     {    DATA_CMD_FDS_LIST,                     NULL,                        cmd_processor_fds_list,                      NULL                   },
     {    DATA_CMD_FDS_READ,                     NULL,                        cmd_processor_fds_read,                      NULL                   },
+    {    DATA_CMD_AMIIBO_UPLOAD_KEYS,           NULL,                        cmd_processor_amiibo_upload_keys,            NULL                   },
+    {    DATA_CMD_AMIIBO_REFRESH_UID,           NULL,                        cmd_processor_amiibo_refresh_uid,            NULL                   },
+    {    DATA_CMD_AMIIBO_AUTO_REFRESH_SET,      NULL,                        cmd_processor_amiibo_auto_refresh_set,       NULL                   },
+    {    DATA_CMD_AMIIBO_AUTO_REFRESH_GET,      NULL,                        cmd_processor_amiibo_auto_refresh_get,       NULL                   },
+    {    DATA_CMD_AMIIBO_VERIFY_SLOT,            NULL,                        cmd_processor_amiibo_verify_slot,            NULL                   },
 #if CONFIG_STANDALONE_U2F
     {    DATA_CMD_U2F_SET_ATTESTATION,          NULL,                        cmd_processor_u2f_set_attestation,           NULL                   },
     {    DATA_CMD_FIDO2_CTAP,                    NULL,                        cmd_processor_fido2_ctap,                    NULL                   },

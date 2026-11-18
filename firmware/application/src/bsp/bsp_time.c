@@ -106,3 +106,12 @@ void bsp_timer_stop(void) {
         }
     }
 }
+
+/* Millisecond time source for the field-session detector. Derive the RTC
+ * rate from the SDK config instead of assuming app_timer ticks are ms:
+ * 32768 Hz / (APP_TIMER_CONFIG_RTC_FREQUENCY + 1) == 16384 Hz. */
+uint32_t bsp_timer_now_ms(void) {
+    return bsp_timer_ticks_to_ms(
+        app_timer_cnt_get(),
+        APP_TIMER_CLOCK_FREQ / (APP_TIMER_CONFIG_RTC_FREQUENCY + 1));
+}

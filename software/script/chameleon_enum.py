@@ -744,6 +744,7 @@ class ButtonPressFunction(enum.IntEnum):
     STANDALONE_TOGGLE = 7
     STANDALONE_ACTION = 8
     STANDALONE_CLEAR = 9
+    AMIIBO_REFRESH = 10
 
     def __str__(self):
         if self == ButtonPressFunction.NONE:
@@ -766,6 +767,8 @@ class ButtonPressFunction(enum.IntEnum):
             return "Run armed standalone mode"
         elif self == ButtonPressFunction.STANDALONE_CLEAR:
             return "Clear standalone results"
+        elif self == ButtonPressFunction.AMIIBO_REFRESH:
+            return "Refresh amiibo UID now"
         return "None"
 
 

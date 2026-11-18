@@ -15,6 +15,10 @@ typedef struct {
 
 void on_data_frame_received(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data);
 
+/* Bind the field-session detector's refresh hook to the shared Amiibo
+ * refresh core. Called once at boot from app_main.c. */
+void nfc_amiibo_auto_refresh_bind(void);
+
 /* -------------------------------------------------------------------------
  * Reader-side MIFARE Classic auth trace.
  *

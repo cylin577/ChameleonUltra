@@ -2,6 +2,8 @@
 
 #include "nfc_mf0_ntag.h"
 #include "nfc_14a.h"
+#include "nfc_amiibo_auto_refresh.h"
+#include "bsp_time.h"
 #include "fds_util.h"
 #include "tag_persistence.h"
 
@@ -1074,6 +1076,9 @@ static void nfc_tag_mf0_ntag_state_handler(uint8_t *p_data, uint16_t szDataBits)
 
     if (szDataBits < 16) return;
 
+    /* Feed the Amiibo scan gate the per-session command activity it needs. */
+    nfc_amiibo_auto_refresh_on_command(command);
+
     NRF_LOG_INFO("received mfu command %x of size %u bits", command, szDataBits);
 
     switch (command) {
@@ -1139,6 +1144,17 @@ static void nfc_tag_mf0_ntag_reset_handler() {
     m_did_first_read = false;
 }
 
+/* NFCT field edge, ISR context. Only stamps the detector clock and never does
+ * crypto/FDS work; the refresh itself runs later in the main loop. */
+static void nfc_tag_mf0_ntag_field_handler(bool present) {
+    nfc_amiibo_auto_refresh_on_field(present, bsp_timer_now_ms());
+    if (!present) {
+        /* Registering cb_field makes nfc_14a.c stop calling cb_reset on
+         * FIELD_LOST, so forward it to keep the old MF0/NTAG reset behavior. */
+        nfc_tag_mf0_ntag_reset_handler();
+    }
+}
+
 static int get_information_size_by_tag_type(tag_specific_type_t type) {
     return sizeof(nfc_tag_14a_coll_res_entity_t) + sizeof(nfc_tag_mf0_ntag_configure_t) + (get_total_pages_by_tag_type(type) * NFC_TAG_MF0_NTAG_DATA_SIZE);
 }
@@ -1179,8 +1195,11 @@ int nfc_tag_mf0_ntag_data_loadcb(tag_specific_type_t type, tag_data_buffer_t *bu
             .get_coll_res = nfc_tag_mf0_ntag_get_coll_res,
             .cb_state = nfc_tag_mf0_ntag_state_handler,
             .cb_reset = nfc_tag_mf0_ntag_reset_handler,
+            .cb_field = nfc_tag_mf0_ntag_field_handler,
         };
         nfc_tag_14a_set_handler(&handler_for_14a);
+        /* New slot data invalidates any arm captured for the previous slot. */
+        nfc_amiibo_auto_refresh_disarm();
         NRF_LOG_INFO("HF ntag data load finish.");
     } else {
         ASSERT(buffer->length == info_size);

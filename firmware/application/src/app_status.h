@@ -35,6 +35,11 @@
 #define     STATUS_MEM_ERR                          (0x73)  // Can't allocate memory or work with memory error
 #define     STATUS_CREATE_RESPONSE_ERR              (0x74)  // Can't create response for command
 #define     STATUS_CMD_ERR                          (0x75)  // Execution of command failed
+#define     STATUS_AMIIBO_KEYS_MISSING              (0x76)  // Amiibo master keys not present on device
+#define     STATUS_AMIIBO_KEYS_INVALID              (0x77)  // Amiibo master keys invalid
+#define     STATUS_AMIIBO_KEYS_FAIL                 (0x78)  // Amiibo master key operation failed
+#define     STATUS_AMIIBO_UID_INVALID               (0x79)  // Amiibo UID invalid
+#define     STATUS_AMIIBO_UID_FAIL                  (0x7A)  // Amiibo UID refresh failed
 
 
 #endif

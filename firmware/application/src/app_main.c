@@ -45,6 +45,10 @@ NRF_LOG_MODULE_REGISTER();
 #include "usb_main.h"
 #include "rgb_marquee.h"
 #include "tag_persistence.h"
+#include "nfc_amiibo_keys_store.h"
+#include "nfc_amiibo_auto_refresh.h"
+#include "nfc_amiibo_refresh_slot.h"
+#include "nfc_amiibo_refresh_button.h"
 #include "settings.h"
 #include "logflash.h"
 #include "app_standalone.h"
@@ -640,8 +644,8 @@ static void show_battery(void) {
     // nothing special to finish, we wait for sleep or slot change
 }
 
-#if defined(PROJECT_CHAMELEON_ULTRA)
-
+/* Bounded LED feedback for offline button actions. Compiled for both Ultra and
+ * Lite: the "Refresh amiibo UID now" binding uses it on both device types. */
 static void offline_status_blink_color(uint8_t blink_color) {
     uint8_t slot = tag_emulation_get_slot();
 
@@ -671,6 +675,8 @@ static void offline_status_error(void) {
 static void offline_status_ok(void) {
     offline_status_blink_color(RGB_GREEN);
 }
+
+#if defined(PROJECT_CHAMELEON_ULTRA)
 
 static void btn_fn_copy_lf(uint8_t slot, tag_specific_type_t type) {
     tag_data_buffer_t *buffer = get_buffer_by_tag_type(type);
@@ -927,6 +933,13 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
             }
             break;
 #endif
+
+        case SettingsButtonAmiiboRefresh:
+            /* Main-loop handler: the refresh core does its own key/HMAC/
+             * signature validation, then persists and commits the new UID. */
+            nfc_amiibo_refresh_button_run(m_is_field_on, nfc_amiibo_refresh_slot,
+                                          offline_status_ok, offline_status_error);
+            break;
 
         case SettingsButtonStandaloneDisarm:
             /* Disarm the active standalone mode. */
@@ -1355,6 +1368,9 @@ int main(void) {
     BOOT_STEP("ble");
 
     rng_drv_and_srand_init(); // Random number generator initialization
+    nfc_amiibo_keys_store_set_backend(fds_read_sync, fds_write_sync, fds_delete_sync);
+    nfc_amiibo_keys_store_load();  // Restore persisted amiibo retail keys
+    nfc_amiibo_auto_refresh_bind();  // Detector -> shared refresh core (no ISR crypto/FDS)
     bsp_timer_init();         // Initialize timeout timer
     bsp_timer_start();        // Start BSP TIMER and prepare it for processing business logic
     button_init();            // Button initialization for handling business logic
@@ -1389,6 +1405,10 @@ int main(void) {
         button_press_process();
         // Standalone subsystem tick (cheap; framework throttles internally)
         app_standalone_tick(app_timer_cnt_get());
+
+        // Deferred Amiibo refresh after a stable field-loss session. Main loop
+        // only: the NFCT ISR must never run the crypto/FDS refresh core.
+        nfc_amiibo_auto_refresh_process(bsp_timer_now_ms());
 
         // Proactive FDS GC while idle — keeps dirty records low so an on-demand
         // GC never has to run mid-command (see fds_idle_gc_maybe).

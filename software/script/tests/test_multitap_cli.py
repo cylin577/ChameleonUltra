@@ -155,6 +155,20 @@ class MultiTapCli(unittest.TestCase):
         self.assertEqual(fake.written, [((0, int(ButtonPressFunction.BATTERY), 0, 0), (0, 0, 0, 0), 250)])
         self.assertIn("3 taps", out.getvalue())
 
+    def test_amibo_refresh_function(self):
+        # enum value + human-readable label
+        self.assertEqual(int(ButtonPressFunction.AMIIBO_REFRESH), 10)
+        self.assertEqual(str(ButtonPressFunction.AMIIBO_REFRESH), "Refresh amiibo UID now")
+        # -f AMIIBO_REFRESH is a valid choice and binds as function code 10
+        fake = FakeCmd()
+        unit = make_unit(fake)
+        args = unit.args_parser().parse_args(["-a", "--taps", "2", "-f", "AMIIBO_REFRESH"])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            unit.on_exec(args)
+        self.assertEqual(fake.written, [((10, 0, 0, 0), (0, 0, 0, 0), 250)])
+        self.assertIn("Refresh amiibo UID now", out.getvalue())
+
     def test_device_rejection_is_reported_without_traceback(self):
         fake = FakeCmd(reject=True)
         unit = make_unit(fake)
