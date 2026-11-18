@@ -20,9 +20,11 @@
     (offsetof(nfc_tag_mf0_ntag_information_t, memory) + \
      (NTAG215_TOTAL_PAGES * NFC_TAG_MF0_NTAG_DATA_SIZE))
 
-static uint8_t m_amiibo_old_dump[NFC_AMIIBO_UID_REFRESH_DUMP_SIZE];
-static uint8_t m_amiibo_new_dump[NFC_AMIIBO_UID_REFRESH_DUMP_SIZE];
-static uint32_t m_amiibo_fds_record[(AMIIBO_NTAG215_INFO_SIZE + 3) / 4];
+/* Large scratch buffers: fully written before read, so keep them out of .bss
+ * (ultra-standalone has almost no RAM headroom for the stack). */
+static __attribute__((section(".noinit"))) uint8_t m_amiibo_old_dump[NFC_AMIIBO_UID_REFRESH_DUMP_SIZE];
+static __attribute__((section(".noinit"))) uint8_t m_amiibo_new_dump[NFC_AMIIBO_UID_REFRESH_DUMP_SIZE];
+static __attribute__((section(".noinit"))) uint32_t m_amiibo_fds_record[(AMIIBO_NTAG215_INFO_SIZE + 3) / 4];
 
 static uint16_t amiibo_refresh_core_status(nfc_amiibo_uid_refresh_status_t status) {
     switch (status) {
