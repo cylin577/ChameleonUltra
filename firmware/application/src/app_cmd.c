@@ -40,6 +40,7 @@
 #include "nfc_amiibo_keys_store.h"
 #include "nfc_amiibo_refresh_slot.h"
 #include "nfc_amiibo_auto_refresh.h"
+#include "nfc_amiibo_auto_refresh_store.h"
 #include "nrf_drv_rng.h"
 
 /* Forward declarations for functions added to nfc_14a.c/h in this PR.
@@ -2390,6 +2391,11 @@ static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_set(uint16_t cmd, uint
 
     if (!enable) {
         nfc_amiibo_auto_refresh_disarm();
+        /* Drop any persisted arming so a reboot stays disarmed. Flash failure
+         * must not change the command response. */
+        if (!nfc_amiibo_auto_refresh_store_clear()) {
+            NRF_LOG_WARNING("amiibo auto refresh: clear failed");
+        }
         return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
     }
 
@@ -2407,6 +2413,11 @@ static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_set(uint16_t cmd, uint
     m_auto_last_status = STATUS_SUCCESS;
     m_auto_last_ok = false;
     nfc_amiibo_auto_refresh_arm(active_slot, data[1] != 0);
+    /* Persist only after arming succeeds. A flash failure is logged, never
+     * surfaced in the CMD 1071 response. */
+    if (!nfc_amiibo_auto_refresh_store_save(true, active_slot, data[1] != 0)) {
+        NRF_LOG_WARNING("amiibo auto refresh: save failed");
+    }
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
 

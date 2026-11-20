@@ -47,6 +47,7 @@ NRF_LOG_MODULE_REGISTER();
 #include "tag_persistence.h"
 #include "nfc_amiibo_keys_store.h"
 #include "nfc_amiibo_auto_refresh.h"
+#include "nfc_amiibo_auto_refresh_store.h"
 #include "nfc_amiibo_refresh_slot.h"
 #include "nfc_amiibo_refresh_button.h"
 #include "settings.h"
@@ -1349,6 +1350,7 @@ int main(void) {
 
     rng_drv_and_srand_init(); // Random number generator initialization
     nfc_amiibo_keys_store_set_backend(fds_read_sync, fds_write_sync, fds_delete_sync);
+    nfc_amiibo_auto_refresh_store_set_backend(fds_read_sync, fds_write_sync, fds_delete_sync);
     nfc_amiibo_keys_store_load();  // Restore persisted amiibo retail keys
     nfc_amiibo_auto_refresh_bind();  // Detector -> shared refresh core (no ISR crypto/FDS)
     bsp_timer_init();         // Initialize timeout timer
@@ -1370,6 +1372,14 @@ int main(void) {
     check_wakeup_src();       // Detect wake-up source and decide BLE broadcast and subsequent hibernation action according to the wake-up source
     BOOT_STEP("wakeup");
     tag_mode_enter();         // Enter card emulation mode by default
+    /* Re-arm CMD 1071 auto refresh from flash, only for a valid NTAG215 slot. */
+    {
+        uint8_t active_slot = tag_emulation_get_slot();
+        tag_slot_specific_type_t active_types;
+        tag_emulation_get_specific_types_by_slot(active_slot, &active_types);
+        nfc_amiibo_auto_refresh_store_restore(
+            active_slot, active_types.tag_hf == TAG_TYPE_NTAG_215);
+    }
     BOOT_STEP("mode");
 
     // usbd event listener

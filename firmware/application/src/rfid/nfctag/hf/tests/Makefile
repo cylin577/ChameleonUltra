@@ -9,7 +9,7 @@ CPPFLAGS += -DAMIIBO_UID_REFRESH_HOST_BUILD=1 -I.. \
 LDLIBS += -lcrypto
 
 TESTS = test_nfc_amiibo_uid_refresh test_nfc_amiibo_keys_store \
-        test_nfc_amiibo_auto_refresh
+        test_nfc_amiibo_auto_refresh test_nfc_amiibo_auto_refresh_store
 
 .PHONY: test clean
 
@@ -33,6 +33,12 @@ test_nfc_amiibo_auto_refresh: test_nfc_amiibo_auto_refresh.c \
          ../nfc_amiibo_uid_refresh.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ test_nfc_amiibo_auto_refresh.c \
 	    ../nfc_amiibo_auto_refresh.c $(LDLIBS)
+
+test_nfc_amiibo_auto_refresh_store: test_nfc_amiibo_auto_refresh_store.c \
+         ../nfc_amiibo_auto_refresh_store.c ../nfc_amiibo_auto_refresh_store.h \
+         ../nfc_amiibo_auto_refresh.c ../nfc_amiibo_auto_refresh.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ test_nfc_amiibo_auto_refresh_store.c \
+	    ../nfc_amiibo_auto_refresh_store.c ../nfc_amiibo_auto_refresh.c $(LDLIBS)
 
 clean:
 	rm -f $(TESTS)

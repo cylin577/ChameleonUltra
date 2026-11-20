@@ -724,4 +724,5 @@ firmware/application/src/rfid/nfctag/lf/tests/test_fdxb_modulator
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_uid_refresh
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_keys_store
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_auto_refresh
+firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_auto_refresh_store
 firmware/application/src/standalone_modes/tests/test_nfc_canary_core
