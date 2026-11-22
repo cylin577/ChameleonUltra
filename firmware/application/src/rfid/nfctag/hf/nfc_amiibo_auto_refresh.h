@@ -32,6 +32,10 @@ extern "C" {
 #define NFC_AMIIBO_AUTO_REFRESH_FIELD_MIN_MS   20u
 #define NFC_AMIIBO_AUTO_REFRESH_LOSS_STABLE_MS 100u
 
+/* Sentinel slot: arm refresh for every NTAG215 slot. The hook resolves the
+ * actual slot at refresh time; 0xFF is never a real slot index. */
+enum { NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL = 0xFFu };
+
 /* Refresh hook. The core never touches crypto/FDS itself. Firmware supplies a
  * strong nfc_amiibo_auto_refresh_do_refresh(); host tests inject one with
  * nfc_amiibo_auto_refresh_set_refresh_fn(). The hook fills uid[] with the UID

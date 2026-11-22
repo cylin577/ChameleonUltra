@@ -4,6 +4,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "nfc_amiibo_refresh_sleep.h"
+
+/* Bind the bounded OK/error blinks used by every refresh path. Called once
+ * from main(); the shared wrapper blinks exactly once per refresh attempt. */
+void nfc_amiibo_refresh_set_status_led(nfc_amiibo_status_led_cb_t show_ok,
+                                       nfc_amiibo_status_led_cb_t show_error);
+
 /**
  * Refresh the active NTAG215 Amiibo slot with a freshly generated UID.
  *
@@ -11,7 +18,9 @@
  * emulating/slot/signature preconditions, applies the signed UID refresh,
  * persists FDS-first when requested, then commits the RAM/reader-visible
  * UID and CRC. Sense is disabled for the critical section and always
- * re-enabled before returning.
+ * re-enabled before returning. After any attempt (success or failure) the
+ * sleep timer is restarted with the configured sleep timeout and exactly one
+ * bounded OK/error blink is shown, so the user has time to read the feedback.
  *
  * Returns a firmware STATUS_* code. On STATUS_SUCCESS the old and new UIDs
  * (7 bytes each) are written to old_uid/new_uid; on failure they are left

@@ -169,6 +169,30 @@ class MultiTapCli(unittest.TestCase):
         self.assertEqual(fake.written, [((10, 0, 0, 0), (0, 0, 0, 0), 250)])
         self.assertIn("Refresh amiibo UID now", out.getvalue())
 
+    def test_amibo_arm_function(self):
+        # enum value + human-readable label
+        self.assertEqual(int(ButtonPressFunction.AMIIBO_ARM), 11)
+        self.assertEqual(str(ButtonPressFunction.AMIIBO_ARM), "Toggle amiibo auto-refresh")
+        # -f AMIIBO_ARM is a valid choice and binds as function code 11
+        fake = FakeCmd()
+        unit = make_unit(fake)
+        args = unit.args_parser().parse_args(["-a", "--taps", "2", "-f", "AMIIBO_ARM"])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            unit.on_exec(args)
+        self.assertEqual(fake.written, [((11, 0, 0, 0), (0, 0, 0, 0), 250)])
+        self.assertIn("Toggle amiibo auto-refresh", out.getvalue())
+
+    def test_btnpress_renders_amibo_arm_binding(self):
+        # function 11 round-trips through btnpress display, not just --multitap
+        fake = FakeCmd(bindings_a=(11, 0, 0, 0), bindings_b=(0, 0, 0, 0))
+        unit = make_unit(fake, HWButtonSettingsGet)
+        args = unit.args_parser().parse_args([])
+        out = io.StringIO()
+        with redirect_stdout(out):
+            unit.on_exec(args)
+        self.assertIn("Toggle amiibo auto-refresh", out.getvalue())
+
     def test_device_rejection_is_reported_without_traceback(self):
         fake = FakeCmd(reject=True)
         unit = make_unit(fake)

@@ -514,5 +514,5 @@ void settings_set_multi_tap_threshold_ms(uint16_t ms) {
  * @return false Button function invalid.
  */
 bool is_settings_button_function_valid(uint8_t function) {
-    return function <= SettingsButtonAmiiboRefresh;
+    return function <= SettingsButtonAmiiboArm;
 }

@@ -1195,7 +1195,7 @@ Get or set button press function of Button A and Button B
 - `-l`, `--long` — Long-press
 - `--multitap` — Bind a function to a tap count (see --taps)
 - `--taps` — Tap count for --multitap: 1 = the short-press binding, 2-5 = a multi-tap binding (factory default: all disabled); a 2-5 tap action always waits for the threshold, because the action is chosen by the final tap count (choices: 1, 2, 3, 4, 5)
-- `-f`, `--function` — Function: NONE (No Function), NEXTSLOT (Select next slot), PREVSLOT (Select previous slot), CLONE (Read then simulate the ID/UID card number), BATTERY (Show Battery Level), FIELDGEN (Toggle NFC Field Generator), STANDALONE_DISARM (Disarm active standalone mode), STANDALONE_TOGGLE (Arm / disarm standalone mode), STANDALONE_ACTION (Run armed standalone mode), STANDALONE_CLEAR (Clear standalone results), AMIIBO_REFRESH (Refresh amiibo UID now) (choices: NONE, NEXTSLOT, PREVSLOT, CLONE, BATTERY, FIELDGEN, STANDALONE_DISARM, STANDALONE_TOGGLE, STANDALONE_ACTION, STANDALONE_CLEAR, AMIIBO_REFRESH)
+- `-f`, `--function` — Function: NONE (No Function), NEXTSLOT (Select next slot), PREVSLOT (Select previous slot), CLONE (Read then simulate the ID/UID card number), BATTERY (Show Battery Level), FIELDGEN (Toggle NFC Field Generator), STANDALONE_DISARM (Disarm active standalone mode), STANDALONE_TOGGLE (Arm / disarm standalone mode), STANDALONE_ACTION (Run armed standalone mode), STANDALONE_CLEAR (Clear standalone results), AMIIBO_REFRESH (Refresh amiibo UID now), AMIIBO_ARM (Toggle amiibo auto-refresh) (choices: NONE, NEXTSLOT, PREVSLOT, CLONE, BATTERY, FIELDGEN, STANDALONE_DISARM, STANDALONE_TOGGLE, STANDALONE_ACTION, STANDALONE_CLEAR, AMIIBO_REFRESH, AMIIBO_ARM)
 
 #### `hw settings multitap`
 
@@ -1204,7 +1204,7 @@ Get or set the multi-tap button bindings. Each button (A/B) can bind a function 
 - `-a`, `-A` — Button A
 - `-b`, `-B` — Button B
 - `--taps` — Tap count to bind: 1 = the short-press binding, 2-5 = a multi-tap binding; a 2-5 tap action always waits for the threshold, because the action is chosen by the final tap count (choices: 1, 2, 3, 4, 5)
-- `-f`, `--function` — Function: NONE (No Function), NEXTSLOT (Select next slot), PREVSLOT (Select previous slot), CLONE (Read then simulate the ID/UID card number), BATTERY (Show Battery Level), FIELDGEN (Toggle NFC Field Generator), STANDALONE_DISARM (Disarm active standalone mode), STANDALONE_TOGGLE (Arm / disarm standalone mode), STANDALONE_ACTION (Run armed standalone mode), STANDALONE_CLEAR (Clear standalone results), AMIIBO_REFRESH (Refresh amiibo UID now) (choices: NONE, NEXTSLOT, PREVSLOT, CLONE, BATTERY, FIELDGEN, STANDALONE_DISARM, STANDALONE_TOGGLE, STANDALONE_ACTION, STANDALONE_CLEAR, AMIIBO_REFRESH)
+- `-f`, `--function` — Function: NONE (No Function), NEXTSLOT (Select next slot), PREVSLOT (Select previous slot), CLONE (Read then simulate the ID/UID card number), BATTERY (Show Battery Level), FIELDGEN (Toggle NFC Field Generator), STANDALONE_DISARM (Disarm active standalone mode), STANDALONE_TOGGLE (Arm / disarm standalone mode), STANDALONE_ACTION (Run armed standalone mode), STANDALONE_CLEAR (Clear standalone results), AMIIBO_REFRESH (Refresh amiibo UID now), AMIIBO_ARM (Toggle amiibo auto-refresh) (choices: NONE, NEXTSLOT, PREVSLOT, CLONE, BATTERY, FIELDGEN, STANDALONE_DISARM, STANDALONE_TOGGLE, STANDALONE_ACTION, STANDALONE_CLEAR, AMIIBO_REFRESH, AMIIBO_ARM)
 - `--threshold-ms` — Maximum gap between two taps, in milliseconds (50-1000, factory default 250); rounded down to a multiple of 10 ms
 
 #### `hw settings reset`

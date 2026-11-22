@@ -513,6 +513,7 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
           <option value="8">Standalone run (= A+B short)</option>
           <option value="9">Standalone clear results (= A+B very long)</option>
           <option value="10">Refresh amiibo UID now</option>
+          <option value="11">Toggle amiibo auto-refresh</option>
         </select></label>
         <button class="ghost small" id="d_getbtn">Get</button>
         <button class="small" id="d_setbtn">Set</button>
@@ -527,10 +528,10 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
         <table class="tbl">
           <tr><th>Tap count</th><th>Button A</th><th>Button B</th></tr>
           <tr><td>1 tap</td><td colspan="2">the button's short-press function (set in the row above)</td></tr>
-          <tr><td>2 taps</td><td><select id="d_mtA2"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td><td><select id="d_mtB2"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td></tr>
-          <tr><td>3 taps</td><td><select id="d_mtA3"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td><td><select id="d_mtB3"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td></tr>
-          <tr><td>4 taps</td><td><select id="d_mtA4"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td><td><select id="d_mtB4"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td></tr>
-          <tr><td>5 taps</td><td><select id="d_mtA5"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td><td><select id="d_mtB5"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option></select></td></tr>
+          <tr><td>2 taps</td><td><select id="d_mtA2"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td><td><select id="d_mtB2"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td></tr>
+          <tr><td>3 taps</td><td><select id="d_mtA3"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td><td><select id="d_mtB3"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td></tr>
+          <tr><td>4 taps</td><td><select id="d_mtA4"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td><td><select id="d_mtB4"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td></tr>
+          <tr><td>5 taps</td><td><select id="d_mtA5"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td><td><select id="d_mtB5"><option value="0">Disabled</option><option value="1">Cycle slot +</option><option value="2">Cycle slot -</option><option value="3">Clone IC UID</option><option value="4">Show battery</option><option value="5">NFC field generator</option><option value="6">Disarm standalone mode</option><option value="7">Standalone arm / disarm</option><option value="8">Standalone run</option><option value="9">Standalone clear results</option><option value="10">Refresh amiibo UID now</option><option value="11">Toggle amiibo auto-refresh</option></select></td></tr>
         </table>
       </div>
       <div class="row" style="margin-top:10px">
@@ -579,6 +580,28 @@ footer { border-top:1px solid var(--border); padding:32px 0; }
       <div class="det">A read on a protected or non-existent record fails the same way either way (no "protected" disclosure) — this fork deliberately hides legacy authenticator private-key records that may remain on deployed devices this way. "Read record" pages the whole thing in 240-byte slices.</div>
       <div class="result" id="d_fdsResult"></div>
       <pre id="d_fdsHex" style="display:none;max-height:320px;overflow-y:auto"></pre>
+    </div>
+
+    <h2><span class="sec-num">D9</span>Amiibo UID refresh</h2>
+    <div class="block">
+      <div class="row">
+        <label class="cfgf" style="flex:1 1 240px">Retail keys file (160 B)<input id="d_amiiboKeyFile" type="file" accept=".bin,application/octet-stream"></label>
+        <button class="small" id="d_amiiboUploadKeys">Upload retail keys</button>
+        <button class="danger small" id="d_amiiboClearKeys">Clear device keys</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="small" id="d_amiiboRefreshNow">Refresh UID now</button>
+        <label class="cfgf"><input id="d_amiiboRefreshPersist" type="checkbox"> Persist refreshed UID to flash</label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <label class="cfgf">Field auto-refresh<select id="d_amiiboArmEnable"><option value="1">Arm (active slot)</option><option value="0">Disarm</option></select></label>
+        <label class="cfgf"><input id="d_amiiboArmPersist" type="checkbox"> Persist arm state</label>
+        <button class="small" id="d_amiiboArmApply">Apply</button>
+        <button class="ghost small" id="d_amiiboArmStatus">Auto-refresh status</button>
+        <button class="ghost small" id="d_amiiboVerify">Verify current slot</button>
+      </div>
+      <div class="det">The key file must be exactly 160 bytes (two 80-byte retail keys). An empty file clears the keys on the device instead. Key bytes are sent to the device only and are never displayed here. Refresh needs an NTAG215 Amiibo slot and retail keys on the device; arm needs NTAG215 in the active slot. Auto-refresh runs while the device is in tag mode and a reader field is present.</div>
+      <div class="result" id="d_amiiboResult"></div>
     </div>
   </section>
 
@@ -1415,13 +1438,14 @@ AABBCCDDEEFF</textarea></label>
 
 <script src="canary.js?v=28"></script>
 <script src="aid_database.js?v=1"></script>
-<script src="button_capabilities.js?v=3"></script>
+<script src="button_capabilities.js?v=4"></script>
 <script src="disasm_thumb.js?v=1"></script>
 <script src="hf14ainfo.js?v=1"></script>
 <script src="multitap.js?v=4"></script>
+<script src="amiibo.js?v=1"></script>
 <script src="plot.js?v=1"></script>
 <script src="logic.js?v=1"></script>
-<script src="fullcmd.js?v=29"></script>
+<script src="fullcmd.js?v=30"></script>
 <script src="logic_tab.js?v=1"></script>
 <script src="terminal.js?v=21"></script>
 </body>

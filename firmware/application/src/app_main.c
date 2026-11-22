@@ -50,6 +50,9 @@ NRF_LOG_MODULE_REGISTER();
 #include "nfc_amiibo_auto_refresh_store.h"
 #include "nfc_amiibo_refresh_slot.h"
 #include "nfc_amiibo_refresh_button.h"
+#include "nfc_amiibo_auto_refresh_button.h"
+#include "nfc_amiibo_auto_refresh_feedback.h"
+#include "nfc_amiibo_refresh_feedback.h"
 #include "settings.h"
 #include "logflash.h"
 #include "app_standalone.h"
@@ -75,6 +78,10 @@ static uint32_t m_last_btn_press[BTN_IDX_COUNT] = {0, 0};        /* press EDGE t
 static uint32_t m_btn_prev_release_ticks[BTN_IDX_COUNT] = {0, 0}; /* RELEASE EDGE ticks of the last tap */
 static app_button_tap_state_t m_btn_tap_state[BTN_IDX_COUNT] = {{0}, {0}};
 static app_button_gesture_state_t m_btn_gesture[BTN_IDX_COUNT];   /* current level segment */
+/* One-shot latch: the long-press action has already fired for the current
+ * hold. Set at the threshold (or by the release fallback), cleared on a new
+ * press edge and on release, so one hold can never run the action twice. */
+static bool m_btn_long_fired[BTN_IDX_COUNT] = {false, false};
 static app_button_edge_queue_t m_btn_edge_queue[BTN_IDX_COUNT];  /* one SPSC queue per button */
 /* Queue overflow: the ISR only flags it (and the tick of the lost edge),
  * the main loop resyncs the gesture state to the pin. The flag and the tick
@@ -645,8 +652,9 @@ static void show_battery(void) {
     // nothing special to finish, we wait for sleep or slot change
 }
 
-/* Bounded LED feedback for offline button actions. Compiled for both Ultra and
- * Lite: the "Refresh amiibo UID now" binding uses it on both device types. */
+/* Bounded LED feedback for the Ultra-only offline clone actions. Refresh /
+ * arm / disarm now use the deferred feedback below, so Lite has no caller. */
+#if defined(PROJECT_CHAMELEON_ULTRA)
 static void offline_status_blink_color(uint8_t blink_color) {
     uint8_t slot = tag_emulation_get_slot();
 
@@ -675,6 +683,85 @@ static void offline_status_error(void) {
 
 static void offline_status_ok(void) {
     offline_status_blink_color(RGB_GREEN);
+}
+#endif /* PROJECT_CHAMELEON_ULTRA */
+
+/* Deferred, non-blocking feedback for refresh/arm/disarm. The command path
+ * only requests a pattern and returns; the main loop drives the animation.
+ * offline_status_ok/error() stay untouched for the other offline actions. */
+static nfc_amiibo_refresh_feedback_state_t m_amiibo_refresh_fb = {0};
+
+static void refresh_feedback_ok(void) {
+    nfc_amiibo_refresh_feedback_request(&m_amiibo_refresh_fb,
+                                        NFC_AMIIBO_REFRESH_FB_REFRESH_OK,
+                                        bsp_timer_now_ms());
+}
+
+static void refresh_feedback_error(void) {
+    nfc_amiibo_refresh_feedback_request(&m_amiibo_refresh_fb,
+                                        NFC_AMIIBO_REFRESH_FB_REFRESH_ERROR,
+                                        bsp_timer_now_ms());
+}
+
+/* LED driver for the deferred animation: flash the seven non-slot LEDs in the
+ * feedback colour, then restore the normal slot lighting on completion. */
+static void refresh_feedback_step(bool on, bool green, bool done, void *ctx) {
+    (void)ctx;
+    uint8_t slot = tag_emulation_get_slot();
+    if (done) {
+        set_slot_light_color(get_color_by_slot(slot));
+        light_up_by_slot();
+        return;
+    }
+    uint32_t *led_pins = hw_get_led_array();
+    if (on) {
+        set_slot_light_color(green ? RGB_GREEN : RGB_RED);
+    }
+    for (uint8_t i = 0; i < RGB_LIST_NUM; i++) {
+        if (i == slot) {
+            continue;
+        }
+        if (on) {
+            nrf_gpio_pin_set(led_pins[i]);
+        } else {
+            nrf_gpio_pin_clear(led_pins[i]);
+        }
+    }
+}
+
+/* Firmware bindings used by CMD 1071, the button toggle and boot restore.
+ * Arm double-blinks green, disarm triple-blinks red: distinct from the single
+ * refresh blink, with no delay in the command path. */
+void nfc_amiibo_auto_refresh_arm_led(void) {
+    nfc_amiibo_refresh_feedback_request(&m_amiibo_refresh_fb,
+                                        NFC_AMIIBO_REFRESH_FB_ARM,
+                                        bsp_timer_now_ms());
+}
+
+void nfc_amiibo_auto_refresh_disarm_led(void) {
+    nfc_amiibo_refresh_feedback_request(&m_amiibo_refresh_fb,
+                                        NFC_AMIIBO_REFRESH_FB_DISARM,
+                                        bsp_timer_now_ms());
+}
+
+/* Main-loop wrappers for the "Toggle amiibo auto-refresh" button action.
+ * All FDS work lives here (never in the button ISR). Failures are logged only:
+ * arming/disarming and LED feedback are unchanged. */
+static void btn_fn_amiibo_auto_refresh_arm(uint8_t slot, bool persist) {
+    (void)slot;     /* all-slot arming: the button no longer pins one slot */
+    (void)persist;  /* the button action always arms with persistence */
+    nfc_amiibo_auto_refresh_init();  /* preserves the injected refresh hook */
+    nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true);
+    if (!nfc_amiibo_auto_refresh_store_save(true, NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true)) {
+        NRF_LOG_WARNING("amiibo auto refresh: button save failed");
+    }
+}
+
+static void btn_fn_amiibo_auto_refresh_disarm(void) {
+    nfc_amiibo_auto_refresh_disarm();
+    if (!nfc_amiibo_auto_refresh_store_clear()) {
+        NRF_LOG_WARNING("amiibo auto refresh: button clear failed");
+    }
 }
 
 #if defined(PROJECT_CHAMELEON_ULTRA)
@@ -937,10 +1024,30 @@ static void run_button_function_by_settings(settings_button_function_t sbf) {
 
         case SettingsButtonAmiiboRefresh:
             /* Main-loop handler: the refresh core does its own key/HMAC/
-             * signature validation, then persists and commits the new UID. */
-            nfc_amiibo_refresh_button_run(m_is_field_on, nfc_amiibo_refresh_slot,
-                                          offline_status_ok, offline_status_error);
+             * signature validation, persists/commits the new UID, and the
+             * shared wrapper emits the single bounded OK/error blink. */
+            nfc_amiibo_refresh_button_run(m_is_field_on, nfc_amiibo_refresh_slot);
             break;
+
+        case SettingsButtonAmiiboArm: {
+            /* Main-loop only: no crypto or FDS in the button ISR. ID 11 is a
+             * toggle: an armed detector is disarmed (and its FDS record
+             * cleared); a disarmed one arms only for an NTAG215 slot. Field on
+             * or a non-NTAG215 slot leaves the detector untouched. */
+            uint8_t slot = tag_emulation_get_slot();
+            tag_slot_specific_type_t tag_types;
+            tag_emulation_get_specific_types_by_slot(slot, &tag_types);
+            nfc_amiibo_auto_refresh_button_run(m_is_field_on,
+                                               nfc_amiibo_auto_refresh_is_armed(),
+                                               tag_types.tag_hf == TAG_TYPE_NTAG_215,
+                                               slot,
+                                               btn_fn_amiibo_auto_refresh_arm,
+                                               btn_fn_amiibo_auto_refresh_disarm,
+                                               nfc_amiibo_auto_refresh_arm_led,
+                                               nfc_amiibo_auto_refresh_disarm_led,
+                                               refresh_feedback_error);
+            break;
+        }
 
         case SettingsButtonStandaloneDisarm:
             /* Disarm the active standalone mode. */
@@ -1072,6 +1179,36 @@ static void button_tap_on_short_release(int idx, char which, uint32_t release_ti
 
 extern bool g_usb_led_marquee_enable;
 
+/**@brief LED and sleep state shared by every button action.
+ *
+ * Main-loop only: sleep_timer_start() must never be called from the ISR.
+ */
+static void button_action_tail(void) {
+    /* Disable led marquee for usb at button pressed. */
+    g_usb_led_marquee_enable = false;
+    /* Re-delay into hibernation (unless field is on) */
+    if (!m_is_field_on) {
+        sleep_timer_start(settings_get_sleep_timeout());
+    }
+}
+
+/**@brief Run a long press: its binding, the tap reset and the shared tail.
+ *
+ * Called by the at-threshold poll and by the release fallback, so one hold
+ * behaves the same whether the threshold was polled or missed.
+ */
+static void button_long_press_action(int idx, char which) {
+    settings_button_function_t fn = (settings_button_function_t)settings_get_long_button_press_config(which);
+    if (fn != SettingsButtonDisable) {
+        run_button_function_by_settings(fn);
+    }
+    /* A long press is a separate gesture: it never counts as a tap and
+     * it resets the pending multi-tap sequence. */
+    m_btn_tap_state[idx].count = 0;
+    button_tap_timer_restart();
+    button_action_tail();
+}
+
 /**@brief Turn one button edge into a gesture (main loop).
  *
  * @param idx  Button index (BTN_IDX_A / BTN_IDX_B).
@@ -1096,6 +1233,7 @@ static void button_process_edge(int idx, const app_button_edge_t *edge) {
 
     if (!was_pressed && gesture->pressed) {
         m_last_btn_press[idx] = edge->ticks;
+        m_btn_long_fired[idx] = false;   /* a new press starts a fresh gesture */
         NRF_LOG_INFO("BUTTON_%s_PRESS", (which == 'a') ? "A" : "B");
     }
 
@@ -1105,21 +1243,19 @@ static void button_process_edge(int idx, const app_button_edge_t *edge) {
 
     if (kind == APP_BUTTON_GESTURE_LONG) {
         NRF_LOG_INFO("BUTTON_%s_RELEASE_LONG", (which == 'a') ? "A" : "B");
-        run_button_function_by_settings(settings_get_long_button_press_config(which));
-        /* A long press is a separate gesture: it never counts as a tap and
-         * it resets the pending multi-tap sequence. */
-        m_btn_tap_state[idx].count = 0;
-        button_tap_timer_restart();
+        if (!m_btn_long_fired[idx]) {
+            /* The threshold poll missed this hold (e.g. its release edge
+             * arrived in the same loop iteration): fire once here. */
+            m_btn_long_fired[idx] = true;   /* latch before the action */
+            button_long_press_action(idx, which);
+        }
+        /* Already fired at the threshold: do not fire again on release. */
+        m_btn_long_fired[idx] = false;
     } else {
         NRF_LOG_INFO("BUTTON_%s_RELEASE_SHORT", (which == 'a') ? "A" : "B");
+        m_btn_long_fired[idx] = false;   /* a short press cannot retain a long latch */
         button_tap_on_short_release(idx, which, edge->ticks);
-    }
-
-    /* Disable led marquee for usb at button pressed. */
-    g_usb_led_marquee_enable = false;
-    /* Re-delay into hibernation (unless field is on) */
-    if (!m_is_field_on) {
-        sleep_timer_start(settings_get_sleep_timeout());
+        button_action_tail();
     }
 }
 
@@ -1166,6 +1302,28 @@ static void button_edge_queue_process(void) {
     }
 }
 
+/**@brief Fire a long press at the threshold, without waiting for release.
+ *
+ * Runs in the main loop right after edge and tap-timer processing, so it never
+ * calls sleep_timer_start() from an ISR. The latch is set before the action,
+ * so one hold fires once; the release path consumes it without firing again.
+ */
+static void button_long_press_poll(void) {
+    uint32_t now = app_timer_cnt_get();
+    uint32_t long_ticks = APP_TIMER_TICKS(BTN_LONG_PRESS_MS);
+    for (int idx = 0; idx < BTN_IDX_COUNT; idx++) {
+        char which = (idx == BTN_IDX_A) ? 'a' : 'b';
+        if (!button_has_any_binding(which)) {
+            continue;
+        }
+        if (!app_button_long_fire_poll(&m_btn_long_fired[idx], &m_btn_gesture[idx], now, long_ticks)) {
+            continue;
+        }
+        NRF_LOG_INFO("BUTTON_%s_HOLD_LONG", (which == 'a') ? "A" : "B");
+        button_long_press_action(idx, which);
+    }
+}
+
 /**@brief button press event process
  */
 static void button_press_process(void) {
@@ -1195,6 +1353,10 @@ static void button_press_process(void) {
         }
         button_tap_timer_restart();
     }
+
+    /* Long-press threshold check last: a release or a tap handled above has
+     * already updated the gesture state and the latch for this iteration. */
+    button_long_press_poll();
 }
 
 extern bool g_usb_port_opened;
@@ -1353,6 +1515,7 @@ int main(void) {
     nfc_amiibo_auto_refresh_store_set_backend(fds_read_sync, fds_write_sync, fds_delete_sync);
     nfc_amiibo_keys_store_load();  // Restore persisted amiibo retail keys
     nfc_amiibo_auto_refresh_bind();  // Detector -> shared refresh core (no ISR crypto/FDS)
+    nfc_amiibo_refresh_set_status_led(refresh_feedback_ok, refresh_feedback_error);
     bsp_timer_init();         // Initialize timeout timer
     bsp_timer_start();        // Start BSP TIMER and prepare it for processing business logic
     button_init();            // Button initialization for handling business logic
@@ -1377,8 +1540,10 @@ int main(void) {
         uint8_t active_slot = tag_emulation_get_slot();
         tag_slot_specific_type_t active_types;
         tag_emulation_get_specific_types_by_slot(active_slot, &active_types);
-        nfc_amiibo_auto_refresh_store_restore(
-            active_slot, active_types.tag_hf == TAG_TYPE_NTAG_215);
+        if (nfc_amiibo_auto_refresh_store_restore(
+                active_slot, active_types.tag_hf == TAG_TYPE_NTAG_215)) {
+            nfc_amiibo_auto_refresh_disarm_led();  /* boot cleared a rejected arming */
+        }
     }
     BOOT_STEP("mode");
 
@@ -1420,6 +1585,12 @@ int main(void) {
         if (!m_is_field_on) {
             blink_usb_led_status();
         }
+
+        // Deferred refresh/arm/disarm LED animation (no delay in CMD path).
+        // Runs after the USB LED effect so the feedback wins while active.
+        nfc_amiibo_refresh_feedback_process(&m_amiibo_refresh_fb,
+                                            bsp_timer_now_ms(),
+                                            refresh_feedback_step, NULL);
 
         // Data pack process
         data_frame_process();

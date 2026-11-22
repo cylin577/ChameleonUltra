@@ -45,6 +45,8 @@ const CU = {
   // taps" modifier). Replaced by the per-tap-count bindings below.
   GET_MULTI_TAP_BINDINGS:1065, SET_MULTI_TAP_BINDINGS:1066,
   // 1060, 1067 and 1068 are retired command IDs; kept reserved, do not reuse.
+  AMIIBO_UPLOAD_KEYS:1069, AMIIBO_REFRESH_UID:1070,
+  AMIIBO_AUTO_REFRESH_SET:1071, AMIIBO_AUTO_REFRESH_GET:1072, AMIIBO_VERIFY_SLOT:1073,
 
   HF14A_SCAN:2000, MF1_DETECT_SUPPORT:2001, MF1_DETECT_PRNG:2002,
   MF1_AUTH_ONE_KEY_BLOCK:2007, MF1_READ_ONE_BLOCK:2008, MF1_WRITE_ONE_BLOCK:2009,
@@ -158,6 +160,9 @@ const STATUS_NAMES = {0x00:"HF_TAG_OK",0x01:"HF_TAG_NO",0x02:"HF_ERR_STAT",0x03:
   0x04:"HF_COLLISION",0x05:"HF_ERR_BCC",0x06:"MF_ERR_AUTH",0x07:"HF_ERR_PARITY",0x08:"HF_ERR_ATS",
   0x40:"LF_TAG_OK",0x41:"LF_TAG_NO_FOUND",0x60:"PAR_ERR",0x66:"DEVICE_MODE_ERROR",0x67:"INVALID_CMD",
   0x68:"SUCCESS",0x69:"NOT_IMPLEMENTED",0x70:"FLASH_WRITE_FAIL",0x71:"FLASH_READ_FAIL",0x72:"INVALID_SLOT_TYPE"};
+// STATUS_AMIIBO_* live in amiibo.js (loaded before this file) so the parsers
+// there can report the same names when used on their own in node tests.
+if(typeof AMIIBO_STATUS_NAMES !== "undefined") Object.assign(STATUS_NAMES, AMIIBO_STATUS_NAMES);
 const stname = s => STATUS_NAMES[s] || ("0x"+s.toString(16));
 const OK_STATUSES = new Set([0x00,0x40,0x68]);
 
@@ -409,6 +414,45 @@ wire("d_settings", dIdent, async () => {
     "BLE pairing key: "+bytesToAscii(d.slice(7,13)));
 });
 
+/* ---------------------------------------------------------------------
+ * Amiibo UID refresh (Device tab D9): CMD 1069..1073. Payload builders and
+ * response parsers are the pure functions in amiibo.js; key bytes are never
+ * echoed to the UI, only the result of the upload.
+ * ------------------------------------------------------------------- */
+const dAmiibo = $("d_amiiboResult");
+wire("d_amiiboUploadKeys", dAmiibo, async () => {
+  const input = $("d_amiiboKeyFile");
+  const file = input && input.files && input.files[0];
+  if(!file) throw new Error("Choose a retail-key file first.");
+  const payload = amiiboBuildKeyUpload(Array.from(new Uint8Array(await file.arrayBuffer())));
+  const f = okOrThrow(await request(CU.AMIIBO_UPLOAD_KEYS, payload));
+  showResult(dAmiibo, amiiboFormatKeyUpload(amiiboParseKeyUpload(f, false)), "ok");
+});
+wire("d_amiiboClearKeys", dAmiibo, async () => {
+  if(!confirm("Clear the retail keys stored on the device? Auto-refresh will stop working until new keys are uploaded.")) return;
+  const f = okOrThrow(await request(CU.AMIIBO_UPLOAD_KEYS, []));
+  showResult(dAmiibo, amiiboFormatKeyUpload(amiiboParseKeyUpload(f, true)), "ok");
+});
+wire("d_amiiboRefreshNow", dAmiibo, async () => {
+  const f = okOrThrow(await request(CU.AMIIBO_REFRESH_UID,
+    amiiboBuildRefreshUid($("d_amiiboRefreshPersist").checked)));
+  showResult(dAmiibo, amiiboFormatRefreshUid(amiiboParseRefreshUid(f)), "ok");
+});
+wire("d_amiiboArmApply", dAmiibo, async () => {
+  const enable = $("d_amiiboArmEnable").value === "1";
+  const f = okOrThrow(await request(CU.AMIIBO_AUTO_REFRESH_SET,
+    amiiboBuildAutoRefreshSet(enable, $("d_amiiboArmPersist").checked)));
+  showResult(dAmiibo, enable ? "Auto-refresh armed for the active slot." : "Auto-refresh disarmed.", "ok");
+});
+wire("d_amiiboArmStatus", dAmiibo, async () => {
+  const f = okOrThrow(await request(CU.AMIIBO_AUTO_REFRESH_GET));
+  showResult(dAmiibo, amiiboFormatAutoRefreshStatus(amiiboParseAutoRefreshStatus(f)), "ok");
+});
+wire("d_amiiboVerify", dAmiibo, async () => {
+  const f = okOrThrow(await request(CU.AMIIBO_VERIFY_SLOT));
+  showResult(dAmiibo, amiiboFormatVerifySlot(amiiboParseVerifySlot(f)), "ok");
+});
+
 wire("d_setmode", $("d_modeResult"), async () => {
   const mode = Number($("d_modeSel").value);
   const f = okOrThrow(await request(CU.CHANGE_DEVICE_MODE, [mode]));
@@ -464,7 +508,7 @@ wire("d_setsleep", dBeh, async () => {
   showResult(dBeh, "Sleep timeout set.", "ok");
 });
 
-const BUTTON_FN_NAMES = {0:"Disabled",1:"Cycle slot +",2:"Cycle slot -",3:"Clone IC UID",4:"Show battery",5:"NFC field generator",6:"Disarm standalone mode",7:"Standalone arm / disarm",8:"Standalone run",9:"Standalone clear results",10:"Refresh amiibo UID now"};
+const BUTTON_FN_NAMES = {0:"Disabled",1:"Cycle slot +",2:"Cycle slot -",3:"Clone IC UID",4:"Show battery",5:"NFC field generator",6:"Disarm standalone mode",7:"Standalone arm / disarm",8:"Standalone run",9:"Standalone clear results",10:"Refresh amiibo UID now",11:"Toggle amiibo auto-refresh"};
 wire("d_getbtn", $("d_btnResult"), async () => {
   const type = $("d_btnSel").value.charCodeAt(0); // 'A' or 'B'
   const isLong = $("d_btnPress").value === "long";
@@ -2347,7 +2391,12 @@ wire("e_savejson", eCard, async () => {
    "DESFIRE_READER_AUTH_ISO7816": "reader mode: ISO 7816 mutual auth vs a physical DESFire card",
    "DESFIRE_READER_GET_VERSION": "reader mode: full 3-frame GetVersion in one T=CL session",
    "STANDALONE_CANARY_EVENT": "device -> host BLE notification (nfc_canary)",
-   "LF_SEARCH": "PM3-style: sweep all LF decoders, first hit"
+   "LF_SEARCH": "PM3-style: sweep all LF decoders, first hit",
+   "AMIIBO_UPLOAD_KEYS": "empty = clear device keys; else 160 bytes (two 80-byte retail keys) -- key bytes are never displayed",
+   "AMIIBO_REFRESH_UID": "u8 flags (bit0 persist) -> 14 bytes: old_uid[7] new_uid[7]",
+   "AMIIBO_AUTO_REFRESH_SET": "u8 enable, u8 persist; arm/disarm field auto-refresh for the active slot",
+   "AMIIBO_AUTO_REFRESH_GET": "empty -> 21-byte status: enabled, slot, scans, last_ok, u16 LE status, old/new UID, activity",
+   "AMIIBO_VERIFY_SLOT": "empty -> 9 bytes: valid, reason, uid[7] (non-mutating)"
   };
   const shHint = $("sh_hint");
   function showHint(){

@@ -10,7 +10,10 @@
 #include "fds_util.h"
 #include "nfc_amiibo_keys_store.h"
 #include "nfc_amiibo_refresh_slot.h"
+#include "nfc_amiibo_refresh_sleep.h"
 #include "nfc_amiibo_uid_refresh.h"
+#include "settings.h"
+#include "syssleep.h"
 #include "nfc_mf0_ntag.h"
 #include "nrf_drv_rng.h"
 #include "tag_emulation.h"
@@ -63,7 +66,7 @@ static uint8_t amiibo_verify_reason(nfc_amiibo_uid_refresh_status_t status) {
     }
 }
 
-uint16_t nfc_amiibo_refresh_slot(bool persist, uint8_t out_old_uid[7], uint8_t out_new_uid[7]) {
+static uint16_t nfc_amiibo_refresh_slot_impl(bool persist, uint8_t out_old_uid[7], uint8_t out_new_uid[7]) {
     /* Restore the persisted keys if the RAM working copy is empty (reboot). */
     if (!nfc_amiibo_uid_refresh_keys_ready()) {
         nfc_amiibo_keys_store_load();
@@ -147,6 +150,28 @@ uint16_t nfc_amiibo_refresh_slot(bool persist, uint8_t out_old_uid[7], uint8_t o
     memcpy(out_old_uid, old_uid, sizeof(old_uid));
     memcpy(out_new_uid, new_uid, sizeof(new_uid));
     return STATUS_SUCCESS;
+}
+
+static void amiibo_refresh_sleep_reset(void) {
+    /* Configured sleep timeout keeps the user awake to see the feedback. */
+    sleep_timer_start(settings_get_sleep_timeout());
+}
+
+static void amiibo_refresh_led_noop(void) {}
+
+static nfc_amiibo_status_led_cb_t m_show_ok = amiibo_refresh_led_noop;
+static nfc_amiibo_status_led_cb_t m_show_error = amiibo_refresh_led_noop;
+
+void nfc_amiibo_refresh_set_status_led(nfc_amiibo_status_led_cb_t show_ok,
+                                       nfc_amiibo_status_led_cb_t show_error) {
+    m_show_ok = show_ok;
+    m_show_error = show_error;
+}
+
+uint16_t nfc_amiibo_refresh_slot(bool persist, uint8_t out_old_uid[7], uint8_t out_new_uid[7]) {
+    return nfc_amiibo_refresh_with_feedback(
+        nfc_amiibo_refresh_slot_impl, persist, out_old_uid, out_new_uid,
+        amiibo_refresh_sleep_reset, m_show_ok, m_show_error);
 }
 
 uint16_t nfc_amiibo_verify_slot(uint8_t out_uid[7], uint8_t *reason) {

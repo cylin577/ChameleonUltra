@@ -22,6 +22,13 @@ static nfc_amiibo_auto_refresh_delete_fn m_delete;
 #define WORD1_PERSIST_BIT  0x00000002u
 #define WORD1_SLOT_SHIFT   8u
 
+/* Legacy records carry a single slot (0..7); new arming uses the all-slot
+ * sentinel. Both are valid on disk so old records still restore. */
+static bool slot_is_valid(uint8_t slot) {
+    return slot < NFC_AMIIBO_AUTO_REFRESH_STORE_MAX_SLOT ||
+           slot == NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL;
+}
+
 void nfc_amiibo_auto_refresh_store_set_backend(
     nfc_amiibo_auto_refresh_read_fn read,
     nfc_amiibo_auto_refresh_write_fn write,
@@ -49,7 +56,7 @@ bool nfc_amiibo_auto_refresh_store_load(bool *enabled, bool *persist, uint8_t *s
         return false;
     }
     uint8_t decoded_slot = (uint8_t)((word1 >> WORD1_SLOT_SHIFT) & 0xFFu);
-    if (decoded_slot >= NFC_AMIIBO_AUTO_REFRESH_STORE_MAX_SLOT) {
+    if (!slot_is_valid(decoded_slot)) {
         return false;
     }
     if (enabled != NULL) {
@@ -65,7 +72,7 @@ bool nfc_amiibo_auto_refresh_store_load(bool *enabled, bool *persist, uint8_t *s
 }
 
 bool nfc_amiibo_auto_refresh_store_save(bool enabled, uint8_t slot, bool persist) {
-    if (slot >= NFC_AMIIBO_AUTO_REFRESH_STORE_MAX_SLOT || m_write == NULL) {
+    if (!slot_is_valid(slot) || m_write == NULL) {
         return false;
     }
     m_record_words[0] = NFC_AMIIBO_AUTO_REFRESH_STORE_MAGIC;
@@ -86,21 +93,33 @@ bool nfc_amiibo_auto_refresh_store_clear(void) {
                     NFC_AMIIBO_AUTO_REFRESH_FDS_KEY) > 0;
 }
 
-void nfc_amiibo_auto_refresh_store_restore(uint8_t active_slot, bool active_slot_is_ntag215) {
+bool nfc_amiibo_auto_refresh_store_restore(uint8_t active_slot, bool active_slot_is_ntag215) {
     bool enabled = false;
     bool persist = false;
     uint8_t slot = 0;
+    bool loaded = nfc_amiibo_auto_refresh_store_load(&enabled, &persist, &slot);
 
-    if (!active_slot_is_ntag215 ||
-        !nfc_amiibo_auto_refresh_store_load(&enabled, &persist, &slot) ||
-        !enabled || slot != active_slot) {
+    (void)active_slot;  /* all-slot arming no longer depends on the active slot */
+    (void)slot;         /* legacy single-slot records restore as all-slot too */
+
+    if (loaded && enabled && !active_slot_is_ntag215) {
+        /* Valid arming but booted on a non-NTAG215 slot: disarm RAM now, yet
+         * keep the record so a later NTAG215 boot still re-arms. The true
+         * return is the feedback cue for a rejected persisted arming. */
         nfc_amiibo_auto_refresh_disarm();
-        (void)nfc_amiibo_auto_refresh_store_clear();
-        return;
+        return true;
     }
 
-    /* Valid persisted arming: re-arm from a clean detector state so the scan
-     * counter starts at 0 and no field session can carry over the reboot. */
+    if (!loaded || !enabled) {
+        /* Absent, corrupt or disabled: nothing to re-arm, clear as before. */
+        nfc_amiibo_auto_refresh_disarm();
+        (void)nfc_amiibo_auto_refresh_store_clear();
+        return false;
+    }
+
+    /* Valid persisted arming: re-arm every slot from a clean detector state so
+     * the scan counter starts at 0 and no field session carries over reboot. */
     nfc_amiibo_auto_refresh_init();
-    nfc_amiibo_auto_refresh_arm(slot, persist);
+    nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, persist);
+    return false;
 }

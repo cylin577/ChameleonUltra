@@ -9,6 +9,12 @@
 const BUTTON_OPCODES = {
   "clearFor": ["STANDALONE_CLEAR_RESULT_FOR"],
   "d_addr": ["GET_DEVICE_ADDRESS"],
+  "d_amiiboArmApply": ["AMIIBO_AUTO_REFRESH_SET"],
+  "d_amiiboArmStatus": ["AMIIBO_AUTO_REFRESH_GET"],
+  "d_amiiboClearKeys": ["AMIIBO_UPLOAD_KEYS"],
+  "d_amiiboRefreshNow": ["AMIIBO_REFRESH_UID"],
+  "d_amiiboUploadKeys": ["AMIIBO_UPLOAD_KEYS"],
+  "d_amiiboVerify": ["AMIIBO_VERIFY_SLOT"],
   "d_battery": ["GET_BATTERY_INFO"],
   "d_blinfo": ["BL_INFO"],
   "d_blver": ["GET_BOOTLOADER_VERSION"],

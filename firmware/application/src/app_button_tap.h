@@ -56,6 +56,27 @@ app_button_gesture_kind_t app_button_gesture_on_edge(app_button_gesture_state_t 
                                                      uint32_t min_tap_ticks,
                                                      uint32_t long_press_ticks);
 
+/* True when the button is currently held down and the current press segment
+ * has already lasted long_press_ticks or more. Unlike
+ * app_button_gesture_on_edge() this needs no release edge, so the main loop
+ * can fire a long press at the threshold instead of waiting for the release.
+ * The elapsed time is a masked 24 bit difference, so an RTC wrap is harmless.
+ * A button that is not pressed (or never had an edge) is never held long. */
+bool app_button_gesture_held_long(const app_button_gesture_state_t *st,
+                                  uint32_t now_ticks,
+                                  uint32_t long_press_ticks);
+
+/* One-shot test-and-set for the long-press fire latch. Returns true exactly
+ * once per press, on the first poll where the button is held long; the latch
+ * is set BEFORE returning so the caller can run the action without re-entry.
+ * The caller clears the latch on a new press edge and on release. Repeated
+ * polls at or past the threshold, and every poll after a release, return
+ * false. */
+bool app_button_long_fire_poll(bool *fired,
+                               const app_button_gesture_state_t *st,
+                               uint32_t now_ticks,
+                               uint32_t long_press_ticks);
+
 /* Per-button tap-sequence state. */
 typedef struct {
     uint8_t count;  /* taps in the current sequence (0 = no sequence) */

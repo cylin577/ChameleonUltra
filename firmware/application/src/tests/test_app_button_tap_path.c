@@ -38,6 +38,8 @@ typedef struct {
     uint32_t next_ticks;     /* where the next edge is placed */
     uint8_t runs[8];
     uint8_t run_count;
+    bool long_fired;        /* app_main's one-shot long-press latch */
+    uint8_t long_fires;     /* long actions that actually ran */
 } sim_t;
 
 static void sim_init(sim_t *s) {
@@ -62,6 +64,7 @@ static void sim_drain(sim_t *s, uint32_t now) {
                                                                      MIN_TAP_TICKS, LONG_TICKS);
         if (!was_pressed && s->gesture.pressed) {
             s->press_ticks = e.ticks;
+            s->long_fired = false;   /* a new press edge clears the latch */
         }
         if (kind == APP_BUTTON_GESTURE_SHORT) {
             /* The gap since the previous release is longer than the
@@ -83,6 +86,12 @@ static void sim_drain(sim_t *s, uint32_t now) {
             }
         } else if (kind == APP_BUTTON_GESTURE_LONG) {
             s->tap.count = 0;   /* long press: not a tap */
+            if (!s->long_fired) {
+                /* Release fallback: the threshold poll was missed. */
+                s->long_fired = true;   /* latch before the action */
+                s->long_fires++;
+            }
+            s->long_fired = false;   /* consumed on release, never fired twice */
         }
     }
     if (s->tap.count > 0 && !s->gesture.pressed) {
@@ -93,6 +102,11 @@ static void sim_drain(sim_t *s, uint32_t now) {
                 s->runs[s->run_count++] = t.function;
             }
         }
+    }
+    /* app_main polls the long threshold last: after edges and the tap timer. */
+    if (app_button_long_fire_poll(&s->long_fired, &s->gesture, now, LONG_TICKS)) {
+        s->long_fires++;
+        s->tap.count = 0;   /* a long hold is not a tap */
     }
 }
 
@@ -222,6 +236,65 @@ static void test_buttons_are_independent(void) {
     CHECK(b.tap.count == 1);
 }
 
+/* A long hold fires once at the threshold, never again on release, and the
+ * short/multi-tap gestures that follow are unchanged. */
+static void test_long_hold_fires_at_threshold_only(void) {
+    sim_t s;
+    sim_init(&s);
+    uint32_t t = s.next_ticks;
+    CHECK(sim_edge(&s, true, t) == APP_BUTTON_EDGE_PUSH_OK);
+    sim_drain(&s, t + LONG_TICKS - 1);
+    CHECK(s.long_fires == 0);
+    sim_drain(&s, t + LONG_TICKS);
+    CHECK(s.long_fires == 1);
+    sim_drain(&s, t + LONG_TICKS + MS_TICKS(500));
+    CHECK(s.long_fires == 1);   /* one fire per hold */
+    uint32_t rel = t + LONG_TICKS + MS_TICKS(600);
+    CHECK(sim_edge(&s, false, rel) == APP_BUTTON_EDGE_PUSH_OK);
+    sim_drain(&s, rel);
+    CHECK(s.long_fires == 1);   /* zero-on-release */
+    CHECK(s.tap.count == 0);    /* a long press is not a tap */
+    CHECK(s.run_count == 0);
+    /* short press and multi-tap behaviour are unchanged afterwards */
+    s.next_ticks = rel + MS_TICKS(40);
+    sim_taps(&s, 2, 60, 40);
+    CHECK(s.run_count == 0);
+    uint32_t last_release = s.next_ticks - MS_TICKS(40);
+    sim_drain(&s, last_release + MS_TICKS(THRESHOLD_MS));
+    CHECK(s.run_count == 1);
+    CHECK(s.runs[0] == 4);      /* the 2-tap action still works */
+    CHECK(s.long_fires == 1);
+}
+
+/* If the poll missed the threshold, the long release fires exactly once. */
+static void test_long_release_fallback_fires_once(void) {
+    sim_t s;
+    sim_init(&s);
+    uint32_t t = s.next_ticks;
+    CHECK(sim_edge(&s, true, t) == APP_BUTTON_EDGE_PUSH_OK);
+    uint32_t rel = t + LONG_TICKS + 10;
+    CHECK(sim_edge(&s, false, rel) == APP_BUTTON_EDGE_PUSH_OK);
+    sim_drain(&s, rel);
+    CHECK(s.long_fires == 1);
+    sim_drain(&s, rel + MS_TICKS(10));
+    CHECK(s.long_fires == 1);
+    CHECK(s.tap.count == 0);
+    CHECK(s.run_count == 0);
+}
+
+/* Short and multi-tap gestures never fire the long action. */
+static void test_taps_never_fire_the_long_action(void) {
+    sim_t s;
+    sim_init(&s);
+    sim_taps(&s, 3, 60, 40);
+    CHECK(s.long_fires == 0);
+    uint32_t last_release = s.next_ticks - MS_TICKS(40);
+    sim_drain(&s, last_release + MS_TICKS(THRESHOLD_MS));
+    CHECK(s.long_fires == 0);
+    CHECK(s.run_count == 1);
+    CHECK(s.runs[0] == 5);      /* the 3-tap action is unchanged */
+}
+
 int main(void) {
     test_three_taps_run_the_third_action_only(20);
     test_three_taps_run_the_third_action_only(10);
@@ -231,6 +304,9 @@ int main(void) {
     test_bounce_burst_counts_exactly_one_tap();
     test_single_tap_runs_the_short_action();
     test_buttons_are_independent();
+    test_long_hold_fires_at_threshold_only();
+    test_long_release_fallback_fires_once();
+    test_taps_never_fire_the_long_action();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

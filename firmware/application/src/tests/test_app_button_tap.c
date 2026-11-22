@@ -473,6 +473,82 @@ static void test_gesture_survives_the_counter_wrap(void) {
     CHECK(app_button_gesture_on_edge(&g, false, after_wrap, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_SHORT);
 }
 
+/* --- Long press at the threshold, without waiting for a release edge ----- */
+
+/* The held-long predicate is false before the threshold, true at it, and
+ * stays true as the hold grows. A released (or unseen) button is never held. */
+static void test_held_long_before_at_after_threshold(void) {
+    app_button_gesture_state_t g;
+    app_button_gesture_init(&g);
+    uint32_t t = 50000;
+    CHECK(app_button_gesture_on_edge(&g, true, t, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_NONE);
+    CHECK(!app_button_gesture_held_long(&g, t + LONG_TICKS - 1, LONG_TICKS));
+    CHECK(app_button_gesture_held_long(&g, t + LONG_TICKS, LONG_TICKS));
+    CHECK(app_button_gesture_held_long(&g, t + LONG_TICKS + MS_TICKS(1), LONG_TICKS));
+    CHECK(app_button_gesture_on_edge(&g, false, t + LONG_TICKS, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_LONG);
+    CHECK(!app_button_gesture_held_long(&g, t + LONG_TICKS, LONG_TICKS));
+    app_button_gesture_init(&g);
+    CHECK(!app_button_gesture_held_long(&g, t + LONG_TICKS, LONG_TICKS));
+}
+
+/* The elapsed hold is a masked 24 bit difference, so a press that straddles
+ * the RTC wrap still crosses the threshold at the right instant. */
+static void test_held_long_survives_the_counter_wrap(void) {
+    app_button_gesture_state_t g;
+    app_button_gesture_init(&g);
+    uint32_t near_wrap = 0x00FFFFF0u;
+    CHECK(app_button_gesture_on_edge(&g, true, near_wrap, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_NONE);
+    uint32_t before = (near_wrap + LONG_TICKS - 1) & 0x00FFFFFFu;
+    uint32_t at = (near_wrap + LONG_TICKS) & 0x00FFFFFFu;
+    CHECK(before < near_wrap);
+    CHECK(at < near_wrap);
+    CHECK(!app_button_gesture_held_long(&g, before, LONG_TICKS));
+    CHECK(app_button_gesture_held_long(&g, at, LONG_TICKS));
+}
+
+/* Repeated polls at/past the threshold fire once, the latch is set before the
+ * action runs, and the release cannot fire it a second time. */
+static void test_long_fires_once_at_threshold_and_zero_on_release(void) {
+    app_button_gesture_state_t g;
+    app_button_gesture_init(&g);
+    bool fired = false;
+    uint32_t t = 90000;
+    CHECK(app_button_gesture_on_edge(&g, true, t, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_NONE);
+    /* A new press edge cleared the latch. */
+    fired = false;
+    CHECK(!app_button_long_fire_poll(&fired, &g, t + LONG_TICKS - 1, LONG_TICKS));
+    CHECK(!fired);
+    CHECK(app_button_long_fire_poll(&fired, &g, t + LONG_TICKS, LONG_TICKS));
+    CHECK(fired);   /* latched before the action */
+    for (uint32_t i = 1; i <= 4; i++) {
+        CHECK(!app_button_long_fire_poll(&fired, &g, t + LONG_TICKS + i * MS_TICKS(50), LONG_TICKS));
+    }
+    uint32_t rel = t + LONG_TICKS + MS_TICKS(200);
+    CHECK(app_button_gesture_on_edge(&g, false, rel, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_LONG);
+    CHECK(!app_button_gesture_held_long(&g, rel, LONG_TICKS));
+    CHECK(!app_button_long_fire_poll(&fired, &g, rel, LONG_TICKS));
+    CHECK(fired);   /* consumed by the release path, not by the poll */
+}
+
+/* If no poll ran before a long release, the latch is still clear: that is the
+ * condition the release fallback uses to fire once. A late poll after the
+ * release never fires, and a new press re-arms the latch. */
+static void test_long_release_fires_when_threshold_was_missed(void) {
+    app_button_gesture_state_t g;
+    app_button_gesture_init(&g);
+    bool fired = false;
+    uint32_t t = 140000;
+    CHECK(app_button_gesture_on_edge(&g, true, t, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_NONE);
+    uint32_t rel = t + LONG_TICKS + 10;
+    CHECK(app_button_gesture_on_edge(&g, false, rel, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_LONG);
+    CHECK(!fired);   /* fallback condition (!fired) holds */
+    CHECK(!app_button_long_fire_poll(&fired, &g, rel + MS_TICKS(10), LONG_TICKS));
+    fired = false;   /* new press edge clears the latch */
+    uint32_t t2 = rel + MS_TICKS(20);
+    CHECK(app_button_gesture_on_edge(&g, true, t2, MIN_TAP_TICKS, LONG_TICKS) == APP_BUTTON_GESTURE_NONE);
+    CHECK(app_button_long_fire_poll(&fired, &g, t2 + LONG_TICKS, LONG_TICKS));
+}
+
 int main(void) {
     test_first_tap_without_binding_fires_short();
     test_first_tap_with_binding_waits();
@@ -507,6 +583,10 @@ int main(void) {
     test_no_dangling_state_after_a_bounce_burst();
     test_bounce_burst_counts_exactly_one_tap();
     test_gesture_survives_the_counter_wrap();
+    test_held_long_before_at_after_threshold();
+    test_held_long_survives_the_counter_wrap();
+    test_long_fires_once_at_threshold_and_zero_on_release();
+    test_long_release_fires_when_threshold_was_missed();
     printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

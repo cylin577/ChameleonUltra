@@ -46,6 +46,24 @@ app_button_gesture_kind_t app_button_gesture_on_edge(app_button_gesture_state_t 
     return APP_BUTTON_GESTURE_SHORT;
 }
 
+bool app_button_gesture_held_long(const app_button_gesture_state_t *st,
+                                  uint32_t now_ticks,
+                                  uint32_t long_press_ticks) {
+    return st->level_known && st->pressed &&
+           (app_button_ticks_diff(now_ticks, st->segment_ticks) >= long_press_ticks);
+}
+
+bool app_button_long_fire_poll(bool *fired,
+                               const app_button_gesture_state_t *st,
+                               uint32_t now_ticks,
+                               uint32_t long_press_ticks) {
+    if (*fired || !app_button_gesture_held_long(st, now_ticks, long_press_ticks)) {
+        return false;
+    }
+    *fired = true;   /* latch before the caller runs the action */
+    return true;
+}
+
 static bool bindings_have_any(const uint8_t *bindings) {
     for (uint8_t i = 0; i < APP_BUTTON_TAP_BIND_COUNT; i++) {
         if (bindings[i] != 0) {

@@ -171,6 +171,26 @@ static void test_arm_slot_disarm(void) {
     CHECK(g_calls == 2 && g_slot == 9 && !g_persist);
 }
 
+/* All-slot arming passes the sentinel through to the hook unchanged: the hook
+ * resolves the real active slot at refresh time, so a slot switch cannot
+ * disarm the detector. */
+static void test_all_slot_arm_passes_sentinel(void) {
+    reset();
+    CHECK(!nfc_amiibo_auto_refresh_is_armed());
+    nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true);
+    CHECK(nfc_amiibo_auto_refresh_is_armed());
+    CHECK(nfc_amiibo_auto_refresh_slot() == NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL);
+
+    nfc_amiibo_auto_refresh_on_field(true, 0);
+    nfc_amiibo_auto_refresh_on_command(CMD_PWD_AUTH);
+    nfc_amiibo_auto_refresh_on_field(false, 50);
+    CHECK(nfc_amiibo_auto_refresh_process(200));
+    CHECK(g_calls == 1);
+    CHECK(g_slot == NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL);
+    CHECK(g_persist);
+    CHECK(nfc_amiibo_auto_refresh_is_armed());  /* still armed after refresh */
+}
+
 static void test_last_status_and_new_session_guard(void) {
     reset();
     nfc_amiibo_auto_refresh_arm(5, true);
@@ -375,6 +395,7 @@ int main(void) {
     test_field_return_cancels_pending();
     test_busy_blocks_mark_and_consume();
     test_arm_slot_disarm();
+    test_all_slot_arm_passes_sentinel();
     test_last_status_and_new_session_guard();
     test_saturating_count();
     test_callback_ms_clock_wrap();

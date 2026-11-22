@@ -41,6 +41,7 @@
 #include "nfc_amiibo_refresh_slot.h"
 #include "nfc_amiibo_auto_refresh.h"
 #include "nfc_amiibo_auto_refresh_store.h"
+#include "nfc_amiibo_auto_refresh_feedback.h"
 #include "nrf_drv_rng.h"
 
 /* Forward declarations for functions added to nfc_14a.c/h in this PR.
@@ -2350,14 +2351,9 @@ static nfc_amiibo_uid_refresh_status_t auto_refresh_hook(
     uint8_t old_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE] = { 0 };
     uint8_t new_uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE] = { 0 };
 
-    /* Never refresh a slot other than the one that was armed. */
-    if (tag_emulation_get_slot() != slot) {
-        nfc_amiibo_auto_refresh_disarm();
-        m_auto_last_status = STATUS_INVALID_SLOT_TYPE;
-        m_auto_last_ok = false;
-        memset(uid, 0, NFC_AMIIBO_UID_REFRESH_UID_SIZE);
-        return NFC_AMIIBO_UID_REFRESH_INVALID_ARGUMENT;
-    }
+    /* All-slot arming: the sentinel is not a slot index, and slot switches must
+     * not disarm. The refresh core resolves the active slot itself. */
+    (void)slot;
 
     uint16_t status = nfc_amiibo_refresh_slot(persist, old_uid, new_uid);
     m_auto_last_status = status;
@@ -2396,6 +2392,7 @@ static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_set(uint16_t cmd, uint
         if (!nfc_amiibo_auto_refresh_store_clear()) {
             NRF_LOG_WARNING("amiibo auto refresh: clear failed");
         }
+        nfc_amiibo_auto_refresh_disarm_led();
         return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
     }
 
@@ -2412,12 +2409,15 @@ static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_set(uint16_t cmd, uint
     memset(m_auto_new_uid, 0, sizeof(m_auto_new_uid));
     m_auto_last_status = STATUS_SUCCESS;
     m_auto_last_ok = false;
-    nfc_amiibo_auto_refresh_arm(active_slot, data[1] != 0);
+    /* The NTAG215 check above still gates arming, but once armed the detector
+     * applies to every slot: switching slots must not disarm it. */
+    nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, data[1] != 0);
     /* Persist only after arming succeeds. A flash failure is logged, never
      * surfaced in the CMD 1071 response. */
-    if (!nfc_amiibo_auto_refresh_store_save(true, active_slot, data[1] != 0)) {
+    if (!nfc_amiibo_auto_refresh_store_save(true, NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, data[1] != 0)) {
         NRF_LOG_WARNING("amiibo auto refresh: save failed");
     }
+    nfc_amiibo_auto_refresh_arm_led();
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
 

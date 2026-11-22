@@ -42,7 +42,8 @@ check(throws(() => M.multitapUnpack([1, 2, 3])), "unpack 9 bytes throws");
 check(throws(() => M.multitapUnpack(null)), "unpack null throws");
 check(throws(() => M.multitapPack([0, 0, 0], [0, 0, 0, 0], 250)), "pack bad slot count throws");
 check(M.multitapPack([10, 0, 0, 0], [0, 0, 0, 0], 250)[0] === 10, "pack function 10 valid");
-check(throws(() => M.multitapPack([11, 0, 0, 0], [0, 0, 0, 0], 250)), "pack function 11 throws");
+check(M.multitapPack([11, 0, 0, 0], [0, 0, 0, 0], 250)[0] === 11, "pack function 11 valid");
+check(throws(() => M.multitapPack([12, 0, 0, 0], [0, 0, 0, 0], 250)), "pack function 12 throws");
 check(throws(() => M.multitapPack([1, 0, 0, 0], [0, 0, 0, 0], 255)), "pack threshold 255 throws");
 check(throws(() => M.multitapPack([1, 0, 0, 0], [0, 0, 0, 0], 49)), "pack threshold 49 throws");
 
@@ -69,7 +70,7 @@ check(M.multitapMergeSlots([4,0,0,0], []).join(",") === "4,0,0,0", "merge withou
 check(M.multitapMergeSlots([4,0,0,0], [{index:1,value:7}]).join(",") === "4,7,0,0", "merge replaces only the dirty slot");
 check((() => { const cur = [4,0,0,0]; M.multitapMergeSlots(cur, [{index:0,value:9}]); return cur.join(",") === "4,0,0,0"; })(), "merge does not modify the device table");
 check(throws(() => M.multitapMergeSlots([4,0,0,0], [{index:4,value:1}])), "merge bad index throws");
-check(throws(() => M.multitapMergeSlots([4,0,0,0], [{index:0,value:11}])), "merge bad function throws");
+check(throws(() => M.multitapMergeSlots([4,0,0,0], [{index:0,value:12}])), "merge bad function throws");
 
 /* The "Set" payload: the device table plus the slots the user changed. */
 const DEVICE = {a: [4,0,0,0], b: [0,7,0,0], thresholdMs: 250};
@@ -94,7 +95,7 @@ check(p3.a.join(",") === "4,0,0,0", "build with a changed threshold keeps the sl
 
 check(throws(() => M.multitapBuildPayload(DEVICE, ["a4"], SELECTED, false, 250)), "build bad slot index throws");
 check(throws(() => M.multitapBuildPayload(DEVICE, ["c0"], SELECTED, false, 250)), "build bad slot key throws");
-check(throws(() => M.multitapBuildPayload(DEVICE, ["a0"], Object.assign({}, SELECTED, {a0: 11}), false, 250)), "build bad function throws");
+check(throws(() => M.multitapBuildPayload(DEVICE, ["a0"], Object.assign({}, SELECTED, {a0: 12}), false, 250)), "build bad function throws");
 check(throws(() => M.multitapBuildPayload(null, [], SELECTED, false, 250)), "build without a device table throws");
 check(throws(() => M.multitapBuildPayload(DEVICE, [], SELECTED, true, 40)), "build bad threshold throws");
 /* A corrupt threshold on the device must not make the "Set" fail. */
@@ -115,8 +116,15 @@ if (fnNamesMatch) {
   const fnNames = vm.runInContext("(" + fnNamesMatch[1] + ")", fnNamesCtx);
   check(fnNames[10] === "Refresh amiibo UID now",
     "fullcmd.js BUTTON_FN_NAMES[10] = Refresh amiibo UID now");
+  check(fnNames[11] === "Toggle amiibo auto-refresh",
+    "fullcmd.js BUTTON_FN_NAMES[11] = Toggle amiibo auto-refresh");
   check(fnNames[9] === "Standalone clear results", "fullcmd.js BUTTON_FN_NAMES[9] unchanged");
 }
+
+/* terminal.js must expose the same name/code mapping for its CLI -f flag. */
+const terminalSrc = fs.readFileSync(path.join(__dirname, "..", "terminal.js"), "utf8");
+check(/AMIIBO_ARM\s*:\s*11\b/.test(terminalSrc),
+  "terminal.js BUTTON_FN_BY_NAME maps AMIIBO_ARM to 11");
 
 const htmlSrc = fs.readFileSync(path.join(__dirname, "..", "phreakbyte.html"), "utf8");
 function selectOptions(id) {
@@ -131,6 +139,15 @@ for (const id of ["d_mtA2", "d_mtA3", "d_mtA4", "d_mtA5", "d_mtB2", "d_mtB3", "d
   const opts = selectOptions(id);
   check(!!opts && opts.indexOf(FN10) >= 0,
     "phreakbyte.html " + id + " has option 10 (Refresh amiibo UID now)");
+}
+
+const FN11 = '<option value="11">Toggle amiibo auto-refresh</option>';
+check(!!browserFnOpts && browserFnOpts.indexOf(FN11) >= 0,
+  "phreakbyte.html d_btnFn has option 11 (Toggle amiibo auto-refresh)");
+for (const id of ["d_mtA2", "d_mtA3", "d_mtA4", "d_mtA5", "d_mtB2", "d_mtB3", "d_mtB4", "d_mtB5"]) {
+  const opts = selectOptions(id);
+  check(!!opts && opts.indexOf(FN11) >= 0,
+    "phreakbyte.html " + id + " has option 11 (Toggle amiibo auto-refresh)");
 }
 
 console.log(pass + " checks, " + fail + " failed");

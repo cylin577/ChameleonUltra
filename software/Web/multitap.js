@@ -7,7 +7,7 @@
  *   [fn_a2 u8][fn_a3 u8][fn_a4 u8][fn_a5 u8]
  *   [fn_b2 u8][fn_b3 u8][fn_b4 u8][fn_b5 u8]
  *   [threshold_ms u16 little endian]
- * The function codes are the same 0..10 values as the short/long press
+ * The function codes are the same 0..11 values as the short/long press
  * bindings (0 = disabled). A tap count of 1 is the button's short-press
  * binding and is NOT part of this payload.
  * The device stores the threshold in units of 10 ms, so only multiples of
@@ -43,7 +43,7 @@ function multitapClampThreshold(ms) {
   return Math.floor(raw / MULTITAP_THRESHOLD_UNIT_MS) * MULTITAP_THRESHOLD_UNIT_MS;
 }
 function multitapCheckFunction(fn) {
-  if (!Number.isInteger(fn) || fn < 0 || fn > 10) throw new Error("invalid button function");
+  if (!Number.isInteger(fn) || fn < 0 || fn > 11) throw new Error("invalid button function");
   return fn;
 }
 function multitapPack(bindingsA, bindingsB, thresholdMs) {

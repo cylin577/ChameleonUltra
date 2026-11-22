@@ -42,10 +42,15 @@ bool nfc_amiibo_auto_refresh_store_save(bool enabled, uint8_t slot, bool persist
 /* Drop the persisted record (best effort). */
 bool nfc_amiibo_auto_refresh_store_clear(void);
 
-/* Re-arm from the persisted record at boot. A valid, enabled record whose
- * slot matches an NTAG215 active slot re-arms from a clean detector state
- * (scan count 0). Anything else (absent/corrupt/disabled/mismatched slot or
- * non-NTAG215) disarms and clears the record. */
-void nfc_amiibo_auto_refresh_store_restore(uint8_t active_slot, bool active_slot_is_ntag215);
+/* Re-arm from the persisted record at boot. A valid, enabled record re-arms
+ * every NTAG215 slot (legacy single-slot records included) from a clean
+ * detector state (scan count 0) when the active slot is NTAG215. An enabled
+ * record on a non-NTAG215 active slot disarms RAM but keeps the record.
+ * Absent/corrupt/disabled records disarm and clear as before.
+ *
+ * Returns true only when a persisted *enabled* arming was rejected because the
+ * active slot is not NTAG215, so the main-loop caller can show a disarm cue.
+ * A missing/corrupt/disabled record returns false: no armed state to announce. */
+bool nfc_amiibo_auto_refresh_store_restore(uint8_t active_slot, bool active_slot_is_ntag215);
 
 #endif /* NFC_AMIIBO_AUTO_REFRESH_STORE_H */

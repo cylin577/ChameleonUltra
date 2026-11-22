@@ -1198,8 +1198,6 @@ int nfc_tag_mf0_ntag_data_loadcb(tag_specific_type_t type, tag_data_buffer_t *bu
             .cb_field = nfc_tag_mf0_ntag_field_handler,
         };
         nfc_tag_14a_set_handler(&handler_for_14a);
-        /* New slot data invalidates any arm captured for the previous slot. */
-        nfc_amiibo_auto_refresh_disarm();
         NRF_LOG_INFO("HF ntag data load finish.");
     } else {
         ASSERT(buffer->length == info_size);

@@ -49,6 +49,7 @@ typedef enum {
     SettingsButtonStandaloneAction  = 8U,  /* run the armed mode */
     SettingsButtonStandaloneClear   = 9U,  /* clear stored results */
     SettingsButtonAmiiboRefresh     = 10U, /* refresh the active Amiibo UID now (Ultra + Lite) */
+    SettingsButtonAmiiboArm         = 11U, /* arm the active Amiibo slot for auto refresh */
 } settings_button_function_t;
 
 typedef struct ALIGN_U32 {

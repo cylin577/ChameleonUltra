@@ -720,9 +720,13 @@ firmware/application/src/tests/test_app_button_tap_path
 firmware/application/src/tests/test_standalone_result_gate
 firmware/application/src/tests/test_bsp_timer_ms
 firmware/application/src/tests/test_nfc_amiibo_refresh_button
+firmware/application/src/tests/test_nfc_amiibo_auto_refresh_button
+firmware/application/src/tests/test_nfc_amiibo_auto_refresh_feedback
 firmware/application/src/rfid/nfctag/lf/tests/test_fdxb_modulator
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_uid_refresh
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_keys_store
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_auto_refresh
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_auto_refresh_store
+firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_refresh_sleep
+firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_refresh_feedback
 firmware/application/src/standalone_modes/tests/test_nfc_canary_core
