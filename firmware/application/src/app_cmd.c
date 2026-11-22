@@ -2477,6 +2477,10 @@ static data_frame_tx_t *cmd_processor_mf0_ntag_write_emu_page_data(uint16_t cmd,
 
     memcpy(&info->memory[page_index][0], &data[2], byte_length);
 
+    /* Explicit slot data upload/write: a global arm from CMD 1071 must not
+     * survive new data being written into the emulated tag. */
+    nfc_amiibo_auto_refresh_on_slot_data_load(true);
+
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
 

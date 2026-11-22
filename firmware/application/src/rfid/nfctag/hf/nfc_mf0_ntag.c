@@ -1198,6 +1198,10 @@ int nfc_tag_mf0_ntag_data_loadcb(tag_specific_type_t type, tag_data_buffer_t *bu
             .cb_field = nfc_tag_mf0_ntag_field_handler,
         };
         nfc_tag_14a_set_handler(&handler_for_14a);
+        /* No disarm here: slot switches reload data through this same callback,
+         * and a global (0xFF) arm must survive them. Explicit slot data
+         * write/upload/generate paths call
+         * nfc_amiibo_auto_refresh_on_slot_data_load(true) instead. */
         NRF_LOG_INFO("HF ntag data load finish.");
     } else {
         ASSERT(buffer->length == info_size);

@@ -6,6 +6,7 @@
 #include "lf_tag_em.h"
 #include "nfc_14a.h"
 #include "nfc_mf0_ntag.h"
+#include "nfc_amiibo_auto_refresh.h"
 #include "nfc_mf1.h"
 #include "nfc_14a_4.h"
 #include "nfc_seos.h"
@@ -348,6 +349,9 @@ static void delete_data_by_tag_type(uint8_t slot, tag_sense_type_t sense_type) {
  * Start the analog card, please call tag_emulation_sense_run function, otherwise you will not sensor the field event
  */
 void tag_emulation_load_data(void) {
+    /* Slot switch / boot / sniff reload: data is only re-read from FDS, never
+     * written by the host, so a global (0xFF) arm must survive it. */
+    nfc_amiibo_auto_refresh_on_slot_data_load(false);
     uint8_t slot = tag_emulation_get_slot();
     load_data_by_tag_type(slot, slotConfig.slots[slot].tag_hf);
     load_data_by_tag_type(slot, slotConfig.slots[slot].tag_lf);
@@ -407,6 +411,8 @@ bool tag_emulation_factory_data(uint8_t slot, tag_specific_type_t tag_type) {
     tag_datas_factory_t factory = get_data_factory_from_tag_type(tag_type);
     // The process of implementing the data formatting data!
     if (factory != NULL && factory(slot, tag_type)) {
+        /* Explicit generate of slot data: any stale global arm is invalid. */
+        nfc_amiibo_auto_refresh_on_slot_data_load(true);
         // If the current data card slot number currently set is the current activated card slot, then we need to update to the memory
         if (tag_emulation_get_slot() == slot) {
             load_data_by_tag_type(slot, tag_type);
@@ -708,6 +714,8 @@ void tag_emulation_change_type(uint8_t slot, tag_specific_type_t tag_type) {
             break;  // never happen
     }
     NRF_LOG_INFO("tag type = %d", tag_type);
+    /* Explicit slot data generate on type change: disarm stale arming. */
+    nfc_amiibo_auto_refresh_on_slot_data_load(true);
     // After the update is completed, we need to notify the relevant data in the update of the memory
     if (sense_type != TAG_SENSE_NO) {
         load_data_by_tag_type(slot, tag_type);

@@ -23,6 +23,7 @@ static bool  m_last_auth_seen;
 static uint8_t  m_last_read_count;
 static uint8_t  m_slot;
 static uint32_t m_field_start;
+static uint32_t m_quiet_since;
 static uint32_t m_pending_since;
 static uint32_t m_scan_count;
 static nfc_amiibo_uid_refresh_status_t m_last_status;
@@ -51,6 +52,7 @@ void nfc_amiibo_auto_refresh_init(void) {
     m_last_read_count = 0;
     m_slot = 0;
     m_field_start = 0;
+    m_quiet_since = 0;
     m_pending_since = 0;
     m_scan_count = 0;
     m_last_status = NFC_AMIIBO_UID_REFRESH_OK;
@@ -81,14 +83,28 @@ void nfc_amiibo_auto_refresh_disarm(void) {
     m_scan_pending = false;
 }
 
+void nfc_amiibo_auto_refresh_on_slot_data_load(bool explicit_slot_data_write) {
+    /* Slot switches reload the same data through the generic load callback and
+     * pass false here: global arming must survive them. Only a real slot data
+     * write/upload/generate disarms the arm captured for the old slot. */
+    if (explicit_slot_data_write) {
+        nfc_amiibo_auto_refresh_disarm();
+    }
+}
+
 void nfc_amiibo_auto_refresh_on_field(bool present, uint32_t ticks) {
     if (present) {
         if (!m_field_present) {
-            /* New field session: start the hold timer, allow one refresh and
-             * clear all command activity so nothing carries between sessions. */
+            /* A new field session starts its hold timer and clears command
+             * activity, but it does NOT re-arm by itself. Only a genuinely
+             * quiet gap between sessions clears the one-refresh latch, so a
+             * rapid polling burst cannot chain multiple UID rewrites. */
+            if ((uint32_t)(ticks - m_quiet_since) >=
+                    NFC_AMIIBO_AUTO_REFRESH_QUIET_MS) {
+                m_session_refreshed = false;
+            }
             m_field_present = true;
             m_field_start = ticks;
-            m_session_refreshed = false;
             m_auth_seen = false;
             m_read_count = 0;
         }
@@ -101,6 +117,8 @@ void nfc_amiibo_auto_refresh_on_field(bool present, uint32_t ticks) {
         return;
     }
     m_field_present = false;
+    /* Start (or restart) the no-field quiet window on every real loss. */
+    m_quiet_since = ticks;
 
     /* Snapshot this session's activity for the CMD 1072 diagnostic byte.
      * Late command frames after FIELD_LOST are ignored by on_command(). */

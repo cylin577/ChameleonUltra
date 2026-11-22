@@ -31,6 +31,11 @@ extern "C" {
 
 #define NFC_AMIIBO_AUTO_REFRESH_FIELD_MIN_MS   20u
 #define NFC_AMIIBO_AUTO_REFRESH_LOSS_STABLE_MS 100u
+/* Longer no-field guard before a consumed refresh latch may re-arm. A console
+ * polling burst keeps re-detecting the field with short gaps; without this
+ * guard every new FIELD_DETECTED would clear the latch and rewrite the UID,
+ * so the console keeps caching a UID that no longer matches the tag. */
+#define NFC_AMIIBO_AUTO_REFRESH_QUIET_MS       500u
 
 /* Sentinel slot: arm refresh for every NTAG215 slot. The hook resolves the
  * actual slot at refresh time; 0xFF is never a real slot index. */
@@ -59,10 +64,17 @@ void nfc_amiibo_auto_refresh_set_scan_count(uint32_t count);
 void nfc_amiibo_auto_refresh_arm(uint8_t slot, bool persist);
 void nfc_amiibo_auto_refresh_disarm(void);
 
+/* Slot-data policy seam. A plain slot switch / FDS reload passes false and
+ * must leave a global (0xFF) arm intact. Only an explicit upload/generate/
+ * write of slot data passes true, disarming stale arming. */
+void nfc_amiibo_auto_refresh_on_slot_data_load(bool explicit_slot_data_write);
+
 /* ISR-safe field edge. `present` stamps the session start, clears the
- * per-session command activity and cancels a pending scan; FIELD_LOST marks one
- * pending scan only if the field was held long enough, saw qualifying command
- * activity, and the detector is free for this session. */
+ * per-session command activity and cancels a pending scan. The one-refresh
+ * latch is only cleared when the new field arrives after a full quiet window
+ * (NFC_AMIIBO_AUTO_REFRESH_QUIET_MS with no field), never on a bare poll.
+ * FIELD_LOST marks one pending scan only if the field was held long enough,
+ * saw qualifying command activity, and the detector is free for this session. */
 void nfc_amiibo_auto_refresh_on_field(bool present, uint32_t ticks);
 
 /* ISR-safe command edge. Ignored while the field is absent. 0x1B (PWD_AUTH)

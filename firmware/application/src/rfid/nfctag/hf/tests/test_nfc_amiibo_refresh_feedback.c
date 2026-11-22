@@ -170,10 +170,35 @@ static void check_command_path_wiring(void) {
     /* CMD 1071 arm/disarm still request exactly one feedback each. */
     CHECK(file_contains("../../../../app_cmd.c", "nfc_amiibo_auto_refresh_arm_led();"));
     CHECK(file_contains("../../../../app_cmd.c", "nfc_amiibo_auto_refresh_disarm_led();"));
-    /* All-slot arming: no slot-mismatch disarm in the CMD hook or in the HF
-     * slot-data load callback. */
+    /* All-slot arming: no slot-mismatch disarm in the CMD hook. The slot
+     * switch vs slot-data-write decision is exercised behaviorally in
+     * check_slot_data_load_policy(), not by scraping source strings. */
     CHECK(!file_contains("../../../../app_cmd.c", "tag_emulation_get_slot() != slot"));
+}
+
+/* Global arm (0xFF) must survive a plain slot switch: that path reloads the
+ * same data through the generic load callback and passes false here. Only an
+ * explicit slot data upload/generate/write passes true and disarms. This runs
+ * against the real detector core linked into this test. */
+static void check_slot_data_load_policy(void) {
+    nfc_amiibo_auto_refresh_init();
+    nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true);
+    CHECK(nfc_amiibo_auto_refresh_is_armed());
+    CHECK(nfc_amiibo_auto_refresh_slot() == NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL);
+
+    /* Two slot switches in a row: still armed, still the all-slots sentinel. */
+    nfc_amiibo_auto_refresh_on_slot_data_load(false);
+    CHECK(nfc_amiibo_auto_refresh_is_armed());
+    CHECK(nfc_amiibo_auto_refresh_slot() == NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL);
+    nfc_amiibo_auto_refresh_on_slot_data_load(false);
+    CHECK(nfc_amiibo_auto_refresh_is_armed());
+
+    /* The generic NTAG load callback itself must not disarm. */
     CHECK(!file_contains("../nfc_mf0_ntag.c", "nfc_amiibo_auto_refresh_disarm();"));
+
+    /* An explicit slot data load/write disarms stale arming. */
+    nfc_amiibo_auto_refresh_on_slot_data_load(true);
+    CHECK(!nfc_amiibo_auto_refresh_is_armed());
 }
 
 static nfc_amiibo_refresh_feedback_state_t g_deferred_state;
@@ -212,6 +237,7 @@ static void check_feedback_is_low_delay(void) {
 
 int main(void) {
     check_command_path_wiring();
+    check_slot_data_load_policy();
     check_feedback_is_low_delay();
 
     check_attempt(STATUS_SUCCESS, true, true);

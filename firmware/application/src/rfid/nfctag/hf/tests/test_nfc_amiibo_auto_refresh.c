@@ -389,6 +389,87 @@ static void test_activity_byte_clamp(void) {
     CHECK(nfc_amiibo_auto_refresh_activity_byte() == 0xFFu);
 }
 
+/* A console reads an amiibo with a burst of short field sessions separated by
+ * short gaps, each carrying qualifying activity. Only the first (complete)
+ * session may refresh; a bare FIELD_DETECTED must never re-arm the latch. */
+static void test_rapid_polling_burst_single_refresh(void) {
+    reset();
+    nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true);
+
+    /* First presentation: one full scan session refreshes exactly once. */
+    nfc_amiibo_auto_refresh_on_field(true, 1000);
+    nfc_amiibo_auto_refresh_on_command(CMD_PWD_AUTH);
+    nfc_amiibo_auto_refresh_on_field(false, 1020);
+    CHECK(nfc_amiibo_auto_refresh_scan_pending());
+    CHECK(nfc_amiibo_auto_refresh_process(1120));
+    CHECK(g_calls == 1);
+    CHECK(nfc_amiibo_auto_refresh_session_refreshed());
+
+    /* ~38 rapid polls, 80 ms gap each (< QUIET_MS), all qualifying. */
+    uint32_t last_loss = 1020u;
+    for (uint32_t base = 1150u; base < 5000u; base += 100u) {
+        nfc_amiibo_auto_refresh_on_field(true, base);
+        CHECK(nfc_amiibo_auto_refresh_session_refreshed());  /* still latched */
+        nfc_amiibo_auto_refresh_on_command(CMD_PWD_AUTH);
+        nfc_amiibo_auto_refresh_on_command(CMD_READ);
+        nfc_amiibo_auto_refresh_on_field(false, base + 20u);
+        last_loss = base + 20u;
+        CHECK(!nfc_amiibo_auto_refresh_scan_pending());
+        CHECK(!nfc_amiibo_auto_refresh_process(base + 200u));
+        CHECK(g_calls == 1);
+    }
+    CHECK(nfc_amiibo_auto_refresh_scan_count() == 1);
+
+    /* A full quiet gap since the last loss re-arms: the next full session
+     * refreshes exactly once again. */
+    nfc_amiibo_auto_refresh_on_field(true,
+                                     last_loss + NFC_AMIIBO_AUTO_REFRESH_QUIET_MS);
+    CHECK(!nfc_amiibo_auto_refresh_session_refreshed());
+    nfc_amiibo_auto_refresh_on_command(CMD_PWD_AUTH);
+    nfc_amiibo_auto_refresh_on_field(false,
+                                     last_loss + NFC_AMIIBO_AUTO_REFRESH_QUIET_MS + 20u);
+    CHECK(nfc_amiibo_auto_refresh_scan_pending());
+    CHECK(nfc_amiibo_auto_refresh_process(
+        last_loss + NFC_AMIIBO_AUTO_REFRESH_QUIET_MS + 200u));
+    CHECK(g_calls == 2);
+    CHECK(nfc_amiibo_auto_refresh_scan_count() == 2);
+}
+
+/* The latch flips at exactly one quiet window after the last FIELD_LOST, not
+ * one millisecond sooner. */
+static void test_quiet_window_threshold(void) {
+    reset();
+    nfc_amiibo_auto_refresh_arm(2, false);
+    const uint32_t quiet = NFC_AMIIBO_AUTO_REFRESH_QUIET_MS;
+
+    /* Refresh once; FIELD_LOST at t=50 starts the quiet window. */
+    nfc_amiibo_auto_refresh_on_field(true, 0);
+    nfc_amiibo_auto_refresh_on_command(CMD_PWD_AUTH);
+    nfc_amiibo_auto_refresh_on_field(false, 50);
+    CHECK(nfc_amiibo_auto_refresh_process(200));
+    CHECK(g_calls == 1);
+
+    /* FIELD_DETECTED one ms before the quiet window: still latched. */
+    nfc_amiibo_auto_refresh_on_field(true, 50u + quiet - 1u);
+    CHECK(nfc_amiibo_auto_refresh_session_refreshed());
+    nfc_amiibo_auto_refresh_on_command(CMD_PWD_AUTH);
+    nfc_amiibo_auto_refresh_on_field(false, 50u + quiet + 19u);
+    CHECK(!nfc_amiibo_auto_refresh_scan_pending());
+    CHECK(!nfc_amiibo_auto_refresh_process(50u + quiet + 119u));
+    CHECK(g_calls == 1);
+
+    /* Exactly QUIET_MS after that loss the latch clears and a full session
+     * refreshes again. */
+    const uint32_t rearm = 50u + quiet + 19u + quiet;
+    nfc_amiibo_auto_refresh_on_field(true, rearm);
+    CHECK(!nfc_amiibo_auto_refresh_session_refreshed());
+    nfc_amiibo_auto_refresh_on_command(CMD_PWD_AUTH);
+    nfc_amiibo_auto_refresh_on_field(false, rearm + 20u);
+    CHECK(nfc_amiibo_auto_refresh_scan_pending());
+    CHECK(nfc_amiibo_auto_refresh_process(rearm + 120u));
+    CHECK(g_calls == 2);
+}
+
 int main(void) {
     test_short_field_ignored();
     test_stable_loss_triggers_once();
@@ -402,6 +483,8 @@ int main(void) {
     test_command_activity_gate();
     test_activity_session_scope();
     test_activity_byte_clamp();
+    test_rapid_polling_burst_single_refresh();
+    test_quiet_window_threshold();
 
     printf("nfc_amiibo_auto_refresh: %d checks, %d failures\n",
            g_checks, g_fail);
