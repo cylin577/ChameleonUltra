@@ -11,8 +11,6 @@ LDLIBS += -lcrypto
 TESTS = test_nfc_amiibo_uid_refresh test_nfc_amiibo_keys_store \
         test_nfc_amiibo_auto_refresh test_nfc_amiibo_auto_refresh_store \
         test_nfc_amiibo_refresh_sleep test_nfc_amiibo_refresh_feedback \
-        test_nfc_amiibo_tag_preserve test_nfc_mf0_ntag_counter \
-        test_nfc_mf0_ntag_pwd_auth test_nfc_14a_repoll \
         test_nfc_amiibo_slot_mark
 
 .PHONY: test clean
@@ -52,25 +50,6 @@ test_nfc_amiibo_refresh_feedback: test_nfc_amiibo_refresh_feedback.c \
          ../nfc_amiibo_auto_refresh.c ../nfc_amiibo_auto_refresh.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ test_nfc_amiibo_refresh_feedback.c \
 	    ../nfc_amiibo_auto_refresh.c $(LDLIBS)
-
-test_nfc_amiibo_tag_preserve: test_nfc_amiibo_tag_preserve.c \
-         ../nfc_amiibo_tag_preserve.c ../nfc_amiibo_tag_preserve.h \
-         ../nfc_amiibo_uid_refresh.c ../nfc_amiibo_uid_refresh.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ test_nfc_amiibo_tag_preserve.c \
-	    ../nfc_amiibo_tag_preserve.c ../nfc_amiibo_uid_refresh.c $(LDLIBS)
-
-test_nfc_mf0_ntag_counter: test_nfc_mf0_ntag_counter.c \
-         ../nfc_mf0_ntag_counter.c ../nfc_mf0_ntag_counter.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ test_nfc_mf0_ntag_counter.c \
-	    ../nfc_mf0_ntag_counter.c $(LDLIBS)
-
-test_nfc_mf0_ntag_pwd_auth: test_nfc_mf0_ntag_pwd_auth.c \
-         ../nfc_mf0_ntag_pwd_auth.c ../nfc_mf0_ntag_pwd_auth.h
-	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ test_nfc_mf0_ntag_pwd_auth.c \
-	    ../nfc_mf0_ntag_pwd_auth.c $(LDLIBS)
-
-test_nfc_14a_repoll: test_nfc_14a_repoll.c ../nfc_14a.c
-	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ test_nfc_14a_repoll.c
 
 test_nfc_amiibo_slot_mark: test_nfc_amiibo_slot_mark.c \
          ../nfc_amiibo_slot_mark.c ../nfc_amiibo_slot_mark.h

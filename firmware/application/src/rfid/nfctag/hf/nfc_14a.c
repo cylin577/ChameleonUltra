@@ -11,7 +11,6 @@ NRF_LOG_MODULE_REGISTER();
 #include "hex_utils.h"
 #include "crc_utils.h"
 #include "nfc_mf1.h"
-#include "nfc_mf0_ntag.h"
 #include "byte_mirror.h"
 
 #include "rfid_main.h"
@@ -153,11 +152,6 @@ static volatile uint16_t m_activation_requests = 0;
 static volatile uint16_t m_atqa_tx = 0;
 static volatile uint16_t m_fdt_timeouts = 0;
 static volatile bool m_atqa_pending = false;
-/* ATQA timing: the 7-bit REQA/WUPA reply must leave on an exact 1172-fc slot
- * instead of WINDOWGRID's jittery window. Save the ambient FRAMEDELAYMAX so
- * TX_FRAMEEND can put it back once the ATQA frame is actually on air. */
-static uint32_t m_saved_frame_delay_max = 0;
-static volatile bool m_atqa_exact = false;
 
 
 /**
@@ -363,18 +357,7 @@ uint16_t nfc_tag_14a_unwrap_frame(const uint8_t *pbtFrame, const size_t szFrameB
 void nfc_tag_14a_tx_bytes(uint8_t *data, uint32_t bytes, bool appendCrc) {
     if (m_sniff_passive) return;   // passive tap: CU must never emit on air
     ASSERT(bytes <= MAX_NFC_TX_BUFFER_SIZE);
-    if (bytes == 2 && !appendCrc && nfc_tag_mf0_ntag_is_amiibo_active()) {
-        /* ATQA (2 bytes, no CRC) for an active Amiibo slot: WINDOWGRID makes
-         * NS2 accept it only ~50% of the time; EXACTVAL at 1172 fc lands it in
-         * the exact slot the reader samples. Every other tag keeps the
-         * standard WINDOWGRID reply below. */
-        m_saved_frame_delay_max = nrf_nfct_frame_delay_max_get();
-        nrf_nfct_frame_delay_max_set(1172);
-        m_atqa_exact = true;
-        NFC_14A_TX_BYTE_CORE(data, bytes, appendCrc, NRF_NFCT_FRAME_DELAY_MODE_EXACTVAL);
-    } else {
-        NFC_14A_TX_BYTE_CORE(data, bytes, appendCrc, NRF_NFCT_FRAME_DELAY_MODE_WINDOWGRID);
-    }
+    NFC_14A_TX_BYTE_CORE(data, bytes, appendCrc, NRF_NFCT_FRAME_DELAY_MODE_WINDOWGRID);
 }
 
 void nfc_tag_14a_set_frame_delay_max(uint32_t ticks) {
@@ -505,13 +488,10 @@ void nfc_tag_14a_data_process(uint8_t *p_data) {
         // Temporary through: Wupa response in non -choice state, no matter what state is in the state, you can use the Wupa instruction to wake up
         if ((szDataBits == 7) && ((isREQA && m_tag_state_14a != NFC_TAG_STATE_14A_HALTED) || isWUPA)) {
             if (m_activation_requests != UINT16_MAX) m_activation_requests++;
-            // Amiibo re-poll while already active/ready: treat it like a fresh
-            // activation. Force IDLE so the normal path below sends ATQA, runs
-            // cb_reset and re-enters READY instead of silently going dark on
-            // NS2. Other tags keep the original reset-and-early-return.
+            // Received 7-bit command (REQA or WUPA) while the tag is active — reset state machine
             if (m_tag_state_14a != NFC_TAG_STATE_14A_IDLE && m_tag_state_14a != NFC_TAG_STATE_14A_HALTED) {
                 m_tag_state_14a = NFC_TAG_STATE_14A_IDLE;
-                if (!nfc_tag_mf0_ntag_is_amiibo_active()) return;
+                return;
             }
             // Only in the case that can provide anti -collision resources,
             if (auto_coll_res != NULL) {
@@ -787,14 +767,10 @@ static inline void nrf_nfct_reset(void) {
     // Use Window Grid frame delay mode.
     nrf_nfct_frame_delay_mode_set(NRF_NFCT_FRAME_DELAY_MODE_WINDOWGRID);
 
-    /* Active Amiibo slots use SDD00100 to keep ATQA at 44 00 across every
-     * activation/re-poll, matching NS2. All other tags keep the ISO14443-3
-     * standard SDD00001 (SDD00100 breaks standard readers like Proxmark3). */
-    if (nfc_tag_mf0_ntag_is_amiibo_active()) {
-        nrf_nfct_sensres_bit_frame_sdd_set(NRF_NFCT_SENSRES_BIT_FRAME_SDD_00100);
-    } else {
-        nrf_nfct_sensres_bit_frame_sdd_set(NRF_NFCT_SENSRES_BIT_FRAME_SDD_00001);
-    }
+    /* Use SDD00001 per ISO14443-3 standard.
+     * Note: SDD00100 was previously used for Windows Phone compatibility
+     * but breaks standard readers (including Proxmark3). SDD00001 is correct. */
+    nrf_nfct_sensres_bit_frame_sdd_set(NRF_NFCT_SENSRES_BIT_FRAME_SDD_00001);
 
     // Restore interrupts.
     nrf_nfct_int_enable(int_enabled);
@@ -933,13 +909,6 @@ void nfc_tag_14a_event_callback(nrfx_nfct_evt_t const *p_event) {
         }
         case NRFX_NFCT_EVT_TX_FRAMEEND: {
             // NRF_LOG_INFO("TX end.\n");
-            if (m_atqa_exact) {
-                /* ATQA went out on the exact 1172-fc slot; put the previous
-                 * FRAMEDELAYMAX back now that the frame is on air. Do not
-                 * clamp with nfc_fdt_reset() here. */
-                nrf_nfct_frame_delay_max_set(m_saved_frame_delay_max);
-                m_atqa_exact = false;
-            }
             /* Restore the default frame-delay window after every TX. The relay
              * response path (nfc_relay_tag_inject_response) widens FRAMEDELAYMAX
              * to 0xFFFFF to absorb BLE latency; reset it here — once the frame

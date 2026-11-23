@@ -5,7 +5,7 @@ CFLAGS  ?= -std=c11 -Wall -Wextra -Wshadow -Wconversion -O1 -g -fsanitize=addres
 TESTS = test_app_button_tap test_app_button_edge test_app_button_tap_path \
         test_standalone_result_gate test_bsp_timer_ms test_nfc_amiibo_refresh_button \
         test_nfc_amiibo_auto_refresh_button test_nfc_amiibo_auto_refresh_feedback \
-        test_tag_mode_reload_gc test_syssleep_tag_guard test_ns2_compat_gate
+        test_ns2_compat_gate
 
 test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done
@@ -33,14 +33,6 @@ test_nfc_amiibo_auto_refresh_feedback: test_nfc_amiibo_auto_refresh_feedback.c \
         ../rfid/nfctag/hf/nfc_amiibo_refresh_sleep.h \
         ../rfid/nfctag/hf/nfc_amiibo_refresh_feedback.h
 	$(CC) $(CFLAGS) -I.. -o $@ test_nfc_amiibo_auto_refresh_feedback.c
-
-# Pure source assertions: no firmware objects linked, only the two .c files read.
-test_tag_mode_reload_gc: test_tag_mode_reload_gc.c ../rfid_main.c ../app_main.c
-	$(CC) $(CFLAGS) -o $@ test_tag_mode_reload_gc.c
-
-# Source assertions for the tag-emulation sleep guard in utils/syssleep.c.
-test_syssleep_tag_guard: test_syssleep_tag_guard.c ../utils/syssleep.c ../app_main.c ../sdk_config.h
-	$(CC) $(CFLAGS) -o $@ test_syssleep_tag_guard.c
 
 # Source assertions for the NS2-compatible main-loop gate in app_main.c.
 test_ns2_compat_gate: test_ns2_compat_gate.c ../app_main.c

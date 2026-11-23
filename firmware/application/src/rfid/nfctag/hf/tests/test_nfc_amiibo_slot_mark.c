@@ -51,8 +51,7 @@ static bool source_contains(const char *path, const char *needle) {
 }
 
 /* True when `needle` appears on a line strictly after the first line
- * containing `anchor`. Used to assert the golden refresh follows the
- * active-slot marker write in amiibo_slot_mark_access(). */
+ * containing `anchor`. Used to assert marker refresh follows a host page write. */
 static bool source_contains_after(const char *path, const char *anchor, const char *needle) {
     FILE *f = fopen(path, "r");
     if (f == NULL) return false;
@@ -162,20 +161,10 @@ int main(void) {
     CHECK(source_contains("../../../../app_cmd.c", "nfc_amiibo_slot_mark_parse_set(length, data, &slot, &mark)"));
     CHECK(source_contains("../../../../app_cmd.c", "nfc_amiibo_slot_mark_parse_get(length, data, &slot)"));
     CHECK(source_contains("../../../../app_cmd.c", "nfc_tag_mf0_ntag_update_amiibo_mark();"));
-    /* CMD 1074 force set/clear must refresh the golden snapshot after writing
-     * the active slot's live config marker, so force-set captures a valid
-     * golden and force-clear invalidates a stale one. */
-    CHECK(source_contains_after("../../../../app_cmd.c",
-                                "live->config.is_amiibo = mark;",
-                                "nfc_tag_mf0_ntag_update_golden_snapshot();"));
-    /* Host page writes: refresh the 0xA5 marker BEFORE capturing/invalidating
-     * the golden snapshot, so writing/clearing page 4 drops a stale golden. */
+    /* Host page writes must refresh the 0xA5 marker after writing page 4. */
     CHECK(source_contains_after("../../../../app_cmd.c",
                                 "memcpy(&info->memory[page_index][0], &data[2], byte_length);",
                                 "nfc_tag_mf0_ntag_update_amiibo_mark();"));
-    CHECK(source_contains_after("../../../../app_cmd.c",
-                                "nfc_tag_mf0_ntag_update_amiibo_mark();",
-                                "nfc_tag_mf0_ntag_update_golden_snapshot();"));
     CHECK(source_contains("../../../../app_cmd.c", "length != 2 * NFC_AMIIBO_UID_REFRESH_RETAIL_KEY_SIZE"));
     CHECK(source_contains("../../../../app_cmd.c", "cmd_processor_amiibo_verify_slot"));
 

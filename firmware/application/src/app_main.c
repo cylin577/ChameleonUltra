@@ -1443,9 +1443,6 @@ static void fds_idle_gc_maybe(void) {
      * than a GC landing mid-command. */
     if (app_standalone_get_state() != STANDALONE_STATE_DISARMED) return;
     if (g_is_ble_connected) return;
-    /* A GC busy-wait of several seconds during an active NFC scan starves
-     * NFCT/LED servicing and can trip the watchdog (watchdog -> DFU reset). */
-    if (g_is_tag_emulating) return;
 
     fds_stat_t stat;
     if (fds_stat(&stat) != NRF_SUCCESS) return;

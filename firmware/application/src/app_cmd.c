@@ -2366,10 +2366,6 @@ static uint16_t amiibo_slot_mark_access(uint8_t slot, bool write, bool mark,
             nfc_tag_mf0_ntag_information_t *live = (nfc_tag_mf0_ntag_information_t *)live_buffer->buffer;
             live->config.amiibo_mark_locked = 1;
             live->config.is_amiibo = mark;
-            /* Re-evaluate the golden snapshot against the new marker: capture
-             * it when force-set makes this an active Amiibo slot, invalidate
-             * it on force-clear so a stale golden cannot restore the flag. */
-            nfc_tag_mf0_ntag_update_golden_snapshot();
         }
     }
     if (marked != NULL) *marked = info->config.is_amiibo ? 1 : 0;
@@ -2538,13 +2534,8 @@ static data_frame_tx_t *cmd_processor_mf0_ntag_write_emu_page_data(uint16_t cmd,
 
     memcpy(&info->memory[page_index][0], &data[2], byte_length);
 
-    /* Page 4 may now carry (or have lost) the Amiibo 0xA5 marker. Refresh the
-     * marker FIRST so the golden snapshot is captured/invalidated against the
-     * new mark (a cleared marker must drop the stale golden, not preserve it). */
+    /* Page 4 may now carry (or have lost) the Amiibo 0xA5 marker. */
     nfc_tag_mf0_ntag_update_amiibo_mark();
-    /* Host page writes are intentional: update the golden snapshot so a later
-     * scan restores these bytes rather than the pre-write state. */
-    nfc_tag_mf0_ntag_update_golden_snapshot();
 
     /* Explicit slot data upload/write: a global arm from CMD 1071 must not
      * survive new data being written into the emulated tag. */

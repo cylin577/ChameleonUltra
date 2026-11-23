@@ -4,9 +4,6 @@
 #include "nfc_14a.h"
 #include "nfc_amiibo_auto_refresh.h"
 #include "nfc_amiibo_slot_mark.h"
-#include "nfc_amiibo_tag_preserve.h"
-#include "nfc_mf0_ntag_counter.h"
-#include "nfc_mf0_ntag_pwd_auth.h"
 #include "bsp_time.h"
 #include "fds_util.h"
 #include "tag_persistence.h"
@@ -146,10 +143,6 @@ static __attribute__((section(".noinit_mf0"))) struct nfc_tag_mf0_auth_log_buffe
     nfc_tag_mf0_ntag_auth_log_t logs[MF0_NTAG_AUTH_LOG_MAX];
     uint32_t count;
 } m_auth_log = {.count = 0};
-
-/* Golden snapshot of the live tag info for signature-bearing NTAG215 Amiibo.
- * NOLOAD RAM: the magic/validity words guard against garbage after power-on. */
-static __attribute__((section(".noinit_mf0"))) nfc_amiibo_tag_preserve_t m_amiibo_golden;
 
 int nfc_tag_mf0_ntag_get_nr_pages_by_tag_type(tag_specific_type_t tag_type) {
     int nr_pages = -1;
@@ -624,19 +617,27 @@ static void handle_any_read(uint8_t block_num, uint8_t block_cnt, uint8_t block_
 
     NRF_LOG_DEBUG("READ handled %02x %02x %02x", block_num, block_cnt, block_max);
 
-    // Update counter for NTAG cards if needed. Only an active NTAG215 Amiibo
-    // keeps it frozen for NS2; a plain NTAG215 still increments.
+    // update counter for NTAG cards if needed
     switch (m_tag_type) {
         case TAG_TYPE_NTAG_213:
         case TAG_TYPE_NTAG_215:
-        case TAG_TYPE_NTAG_216: {
-            int first_cfg_page = get_first_cfg_page_by_tag_type(m_tag_type);
-            uint8_t access = m_tag_information->memory[first_cfg_page + CONF_ACCESS_PAGE_OFFSET][CONF_ACCESS_BYTE];
-            nfc_mf0_ntag_counter_on_read((uint16_t)m_tag_type, access, &m_did_first_read,
-                                         get_counter_data_by_index(0, false),
-                                         nfc_tag_mf0_ntag_is_amiibo_active());
-            break;
-        }
+        case TAG_TYPE_NTAG_216:
+            if (!m_did_first_read) {
+                m_did_first_read = true;
+
+                int first_cfg_page = get_first_cfg_page_by_tag_type(m_tag_type);
+                int access = m_tag_information->memory[first_cfg_page + CONF_ACCESS_PAGE_OFFSET][CONF_ACCESS_BYTE];
+
+                if ((access & CONF_ACCESS_NFC_CNT_EN) != 0) {
+                    uint8_t *ctr = get_counter_data_by_index(0, false);
+                    uint32_t counter = (((uint32_t)ctr[0]) << 16) | (((uint32_t)ctr[1]) << 8) | ((uint32_t)ctr[2]);
+                    if (counter < 0xFFFFFF) counter += 1;
+                    ctr[0] = (uint8_t)(counter >> 16);
+                    ctr[1] = (uint8_t)(counter >> 8);
+                    ctr[2] = (uint8_t)(counter);
+                }
+                break;
+            }
         default:
             break;
     }
@@ -1002,8 +1003,9 @@ static void handle_pwd_auth_command(uint8_t *p_data) {
         return;
     }
 
-    /* Log every PWD_AUTH attempt. NTAG215 Amiibo emulation accepts any
-     * password, but we still record what the reader tried. */
+    uint32_t pwd = *(uint32_t *)m_tag_information->memory[first_cfg_page + CONF_PWD_PAGE_OFFSET];
+    uint32_t supplied_pwd = *(uint32_t *)&p_data[1];
+
     if (m_tag_information->config.detection_enable && m_auth_log.count < MF0_NTAG_AUTH_LOG_MAX) {
         memcpy(m_auth_log.logs[m_auth_log.count].pwd, &p_data[1], 4);
         m_auth_log.count++;
@@ -1011,11 +1013,7 @@ static void handle_pwd_auth_command(uint8_t *p_data) {
                      p_data[1], p_data[2], p_data[3], p_data[4]);
     }
 
-    uint8_t *stored_pwd = m_tag_information->memory[first_cfg_page + CONF_PWD_PAGE_OFFSET];
-    uint8_t *stored_pack = m_tag_information->memory[first_cfg_page + CONF_PACK_PAGE_OFFSET];
-    uint8_t pack[2];
-    if (!nfc_mf0_ntag_pwd_auth_decide(m_tag_type, &p_data[1], stored_pwd, stored_pack,
-                                      nfc_tag_mf0_ntag_is_amiibo_active(), pack)) {
+    if (pwd != supplied_pwd) {
         if (auth_lim) {
             cnt_data[MF0_NTAG_AUTHLIM_OFF_IN_CTR] &= ~MF0_NTAG_AUTHLIM_MASK_IN_CTR;
             cnt_data[MF0_NTAG_AUTHLIM_OFF_IN_CTR] |= (auth_cnt + 1) & MF0_NTAG_AUTHLIM_MASK_IN_CTR;
@@ -1029,7 +1027,7 @@ static void handle_pwd_auth_command(uint8_t *p_data) {
     m_tag_authenticated = true; // TODO: this should be possible to reset somehow
 
     // Send the PACK value back
-    nfc_tag_14a_tx_bytes(pack, 2, true);
+    nfc_tag_14a_tx_bytes(m_tag_information->memory[first_cfg_page + CONF_PACK_PAGE_OFFSET], 2, true);
 }
 
 static void handle_check_tearing_event(int index) {
@@ -1078,11 +1076,6 @@ static void nfc_tag_mf0_ntag_state_handler(uint8_t *p_data, uint16_t szDataBits)
     uint8_t block_num = p_data[1];
 
     if (szDataBits < 16) return;
-
-    /* Any real field command may drift the live tag (counter/page writes).
-     * Mark dirty: a clean FIELD_LOST commits it as the new golden, while an
-     * interrupted session is restored on the next FIELD_DETECTED or save. */
-    nfc_amiibo_tag_preserve_mark_dirty(&m_amiibo_golden);
 
     /* Feed the Amiibo scan gate the per-session command activity it needs. */
     nfc_amiibo_auto_refresh_on_command(command);
@@ -1152,23 +1145,10 @@ static void nfc_tag_mf0_ntag_reset_handler() {
     m_did_first_read = false;
 }
 
-static int get_information_size_by_tag_type(tag_specific_type_t type);
-
 /* NFCT field edge, ISR context. Only stamps the detector clock and never does
  * crypto/FDS work; the refresh itself runs later in the main loop. */
 static void nfc_tag_mf0_ntag_field_handler(bool present) {
     nfc_amiibo_auto_refresh_on_field(present, bsp_timer_now_ms());
-    if (m_tag_information != NULL && m_tag_type != TAG_TYPE_UNDEFINED) {
-        /* Restore only for an interrupted (uncommitted) session. A clean
-         * FIELD_LOST commits the live writes/counter as the new golden, so a
-         * following FIELD_DETECTED must not revert them. */
-        if (nfc_amiibo_tag_preserve_on_field(&m_amiibo_golden, present,
-                                             m_tag_information,
-                                             get_information_size_by_tag_type(m_tag_type)) ==
-            NFC_AMIIBO_PRESERVE_FIELD_RESTORE) {
-            nfc_tag_mf0_ntag_reset_handler();
-        }
-    }
     if (!present) {
         /* Registering cb_field makes nfc_14a.c stop calling cb_reset on
          * FIELD_LOST, so forward it to keep the old MF0/NTAG reset behavior. */
@@ -1196,28 +1176,11 @@ int nfc_tag_mf0_ntag_data_savecb(tag_specific_type_t type, tag_data_buffer_t *bu
             NRF_LOG_INFO("The mf0/ntag will be set to shadow write mode.");
             m_tag_information->config.mode_block_write = NFC_TAG_MF0_NTAG_WRITE_SHADOW;
         }
-        /* A save mid-field must never persist scan drift to FDS. */
-        if (nfc_amiibo_tag_preserve_is_dirty(&m_amiibo_golden)) {
-            nfc_amiibo_tag_preserve_take(&m_amiibo_golden, m_tag_information);
-            nfc_amiibo_tag_preserve_mark_clean(&m_amiibo_golden);
-        }
         // Save the corresponding size data according to the current label type
         return get_information_size_by_tag_type(type);
     } else {
         ASSERT(false);
         return 0;
-    }
-}
-
-void nfc_tag_mf0_ntag_update_golden_snapshot(void) {
-    if (m_tag_type == TAG_TYPE_UNDEFINED || m_tag_information == NULL) return;
-
-    if (nfc_amiibo_tag_preserve_is_target((uint16_t)m_tag_type,
-                                          nfc_tag_mf0_ntag_is_amiibo_active())) {
-        nfc_amiibo_tag_preserve_capture(&m_amiibo_golden, m_tag_information,
-                                        get_information_size_by_tag_type(m_tag_type));
-    } else {
-        nfc_amiibo_tag_preserve_invalidate(&m_amiibo_golden);
     }
 }
 
@@ -1228,13 +1191,8 @@ int nfc_tag_mf0_ntag_data_loadcb(tag_specific_type_t type, tag_data_buffer_t *bu
         m_tag_information = (nfc_tag_mf0_ntag_information_t *)buffer->buffer;
         // The specific type of MF0/NTAG tag that is emulated by the cache
         m_tag_type = type;
-        /* Auto-detect the persisted marker on load; no host action needed.
-         * This must run before the golden capture, which is gated on the
-         * resulting marker via nfc_tag_mf0_ntag_is_amiibo_active(). */
+        // Auto-detect the persisted per-slot Amiibo marker from page 4.
         nfc_tag_mf0_ntag_update_amiibo_mark();
-        /* Capture the pristine state for active NTAG215 Amiibo slots; other
-         * tags (including unmarked NTAG215) disable the preserve machinery. */
-        nfc_tag_mf0_ntag_update_golden_snapshot();
         // Register 14A communication management interface
         nfc_tag_14a_handler_t handler_for_14a = {
             .get_coll_res = nfc_tag_mf0_ntag_get_coll_res,

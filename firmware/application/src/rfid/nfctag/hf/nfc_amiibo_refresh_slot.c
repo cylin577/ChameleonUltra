@@ -140,9 +140,6 @@ static uint16_t nfc_amiibo_refresh_slot_impl(bool persist, uint8_t out_old_uid[7
         uint16_t crc;
         calc_14a_crc_lut((uint8_t *)info, AMIIBO_NTAG215_INFO_SIZE, (uint8_t *)&crc);
         *buffer->crc = crc;
-        /* The refreshed data is intentional: make it the new golden so later
-         * scans restore it instead of the pre-refresh snapshot. */
-        nfc_tag_mf0_ntag_update_golden_snapshot();
     }
     tag_emulation_sense_switch(TAG_SENSE_HF, true);
 
