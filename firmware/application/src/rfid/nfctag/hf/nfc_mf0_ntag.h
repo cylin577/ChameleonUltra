@@ -67,8 +67,11 @@ typedef struct {
     nfc_tag_mf0_ntag_write_mode_t mode_block_write: 3;
     // Enable key detection (password logging)
     uint8_t detection_enable: 1;
+    // Persistent per-slot Amiibo marker and its explicit lock
+    uint8_t is_amiibo: 1;
+    uint8_t amiibo_mark_locked: 1;
     // reserve remaining bits
-    uint8_t reserved1: 3;
+    uint8_t reserved1: 1;
     uint8_t reserved2;
     uint8_t reserved3;
 } nfc_tag_mf0_ntag_configure_t;
@@ -88,6 +91,8 @@ typedef struct {
 
 int nfc_tag_mf0_ntag_data_loadcb(tag_specific_type_t type, tag_data_buffer_t *buffer);
 int nfc_tag_mf0_ntag_data_savecb(tag_specific_type_t type, tag_data_buffer_t *buffer);
+/* Make the current live tag info the golden snapshot (no-op for non-targets). */
+void nfc_tag_mf0_ntag_update_golden_snapshot(void);
 bool nfc_tag_mf0_ntag_data_factory(uint8_t slot, tag_specific_type_t tag_type);
 int nfc_tag_mf0_ntag_get_nr_pages_by_tag_type(tag_specific_type_t tag_type);
 uint8_t *nfc_tag_mf0_ntag_get_counter_data_by_index(uint8_t index);
@@ -105,5 +110,11 @@ void nfc_tag_mf0_ntag_set_detection_enable(bool enable);
 bool nfc_tag_mf0_ntag_is_detection_enable(void);
 void nfc_tag_mf0_ntag_detection_log_clear(void);
 uint32_t nfc_tag_mf0_ntag_detection_log_count(void);
+
+/* Re-evaluate the cached slot's Amiibo marker from its tag type and page 4.
+ * A locked marker keeps its explicit value; otherwise detection wins. */
+void nfc_tag_mf0_ntag_update_amiibo_mark(void);
+/* True only for an active NTAG215 slot with a cached, marked NTAG215 tag. */
+bool nfc_tag_mf0_ntag_is_amiibo_active(void);
 
 #endif

@@ -93,7 +93,7 @@ bool nfc_amiibo_auto_refresh_store_clear(void) {
                     NFC_AMIIBO_AUTO_REFRESH_FDS_KEY) > 0;
 }
 
-bool nfc_amiibo_auto_refresh_store_restore(uint8_t active_slot, bool active_slot_is_ntag215) {
+bool nfc_amiibo_auto_refresh_store_restore(uint8_t active_slot, bool active_slot_is_amiibo) {
     bool enabled = false;
     bool persist = false;
     uint8_t slot = 0;
@@ -102,9 +102,9 @@ bool nfc_amiibo_auto_refresh_store_restore(uint8_t active_slot, bool active_slot
     (void)active_slot;  /* all-slot arming no longer depends on the active slot */
     (void)slot;         /* legacy single-slot records restore as all-slot too */
 
-    if (loaded && enabled && !active_slot_is_ntag215) {
-        /* Valid arming but booted on a non-NTAG215 slot: disarm RAM now, yet
-         * keep the record so a later NTAG215 boot still re-arms. The true
+    if (loaded && enabled && !active_slot_is_amiibo) {
+        /* Valid arming but booted on a non-Amiibo slot: disarm RAM now, yet
+         * keep the record so a later Amiibo boot still re-arms. The true
          * return is the feedback cue for a rejected persisted arming. */
         nfc_amiibo_auto_refresh_disarm();
         return true;

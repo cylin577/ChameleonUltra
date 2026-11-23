@@ -88,6 +88,8 @@
 #define DATA_CMD_AMIIBO_AUTO_REFRESH_SET        (1071)  /* [u8 enable][u8 persist]; arm RAM-only field-session auto refresh */
 #define DATA_CMD_AMIIBO_AUTO_REFRESH_GET        (1072)  /* empty -> 21-byte auto-refresh status snapshot */
 #define DATA_CMD_AMIIBO_VERIFY_SLOT             (1073)  /* empty -> 9-byte verify result (valid, reason, uid[7]) */
+#define DATA_CMD_AMIIBO_SET_SLOT_MARK           (1074)  /* [u8 slot][u8 value]; 1 force mark+lock, 0 force clear+lock */
+#define DATA_CMD_AMIIBO_GET_SLOT_MARK           (1075)  /* [u8 slot] -> [u8 marked][u8 locked] */
 //
 // ******************************************************************
 

@@ -67,6 +67,11 @@ void tag_mode_enter(void) {
         bsp_delay_ms(60);
 #endif
 
+        // Reload active slot data before sensing, matching CMD 2020 sniff mode:
+        // the NFCT anti-collision response is built from m_tag_information, which
+        // can still hold a previous slot's UID if an async FDS load hasn't landed.
+        tag_emulation_load_data();
+
         // to run tag emulation
         tag_emulation_sense_run();
     }

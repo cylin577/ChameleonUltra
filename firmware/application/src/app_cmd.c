@@ -37,6 +37,7 @@
 #endif
 #include "nfc_14a.h"
 #include "nfc_amiibo_uid_refresh.h"
+#include "nfc_amiibo_slot_mark.h"
 #include "nfc_amiibo_keys_store.h"
 #include "nfc_amiibo_refresh_slot.h"
 #include "nfc_amiibo_auto_refresh.h"
@@ -2336,6 +2337,68 @@ static data_frame_tx_t *cmd_processor_amiibo_verify_slot(uint16_t cmd, uint16_t 
     return data_frame_make(cmd, STATUS_SUCCESS, sizeof(response), response);
 }
 
+/* ---- Persistent per-slot Amiibo marker (CMD 1074/1075) -----------------
+ * The marker lives in the slot's NTAG215 FDS record, so it survives slot
+ * switches. On load the emulator re-detects it unless it was explicitly
+ * locked by a host write. */
+static uint16_t amiibo_slot_mark_access(uint8_t slot, bool write, bool mark,
+                                        uint8_t *marked, uint8_t *locked) {
+    tag_slot_specific_type_t types;
+    tag_emulation_get_specific_types_by_slot(slot, &types);
+    if (types.tag_hf != TAG_TYPE_NTAG_215) return STATUS_INVALID_SLOT_TYPE;
+
+    fds_slot_record_map_t map_info;
+    get_fds_map_by_slot_sense_type_for_dump(slot, TAG_SENSE_HF, &map_info);
+
+    uint8_t buffer[sizeof(nfc_tag_14a_coll_res_entity_t) + sizeof(nfc_tag_mf0_ntag_configure_t) +
+                   NFC_TAG_NTAG_BLOCK_MAX * NFC_TAG_MF0_NTAG_DATA_SIZE];
+    uint16_t length = sizeof(buffer);
+    if (!fds_read_sync(map_info.id, map_info.key, &length, buffer)) return STATUS_FLASH_WRITE_FAIL;
+
+    nfc_tag_mf0_ntag_information_t *info = (nfc_tag_mf0_ntag_information_t *)buffer;
+    if (write) {
+        info->config.amiibo_mark_locked = 1;
+        info->config.is_amiibo = mark;
+        if (!fds_write_sync(map_info.id, map_info.key, length, buffer)) return STATUS_FLASH_WRITE_FAIL;
+        /* Keep the active slot's RAM copy in sync with the FDS write. */
+        if (slot == tag_emulation_get_slot()) {
+            tag_data_buffer_t *live_buffer = get_buffer_by_tag_type(TAG_TYPE_NTAG_215);
+            nfc_tag_mf0_ntag_information_t *live = (nfc_tag_mf0_ntag_information_t *)live_buffer->buffer;
+            live->config.amiibo_mark_locked = 1;
+            live->config.is_amiibo = mark;
+            /* Re-evaluate the golden snapshot against the new marker: capture
+             * it when force-set makes this an active Amiibo slot, invalidate
+             * it on force-clear so a stale golden cannot restore the flag. */
+            nfc_tag_mf0_ntag_update_golden_snapshot();
+        }
+    }
+    if (marked != NULL) *marked = info->config.is_amiibo ? 1 : 0;
+    if (locked != NULL) *locked = info->config.amiibo_mark_locked ? 1 : 0;
+    return STATUS_SUCCESS;
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_set_slot_mark(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    (void)status;
+    uint8_t slot;
+    bool mark;
+    if (!nfc_amiibo_slot_mark_parse_set(length, data, &slot, &mark)) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+    return data_frame_make(cmd, amiibo_slot_mark_access(slot, true, mark, NULL, NULL), 0, NULL);
+}
+
+static data_frame_tx_t *cmd_processor_amiibo_get_slot_mark(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {
+    (void)status;
+    uint8_t slot;
+    if (!nfc_amiibo_slot_mark_parse_get(length, data, &slot)) {
+        return data_frame_make(cmd, STATUS_PAR_ERR, 0, NULL);
+    }
+    uint8_t response[2] = { 0, 0 };
+    uint16_t result = amiibo_slot_mark_access(slot, false, false, &response[0], &response[1]);
+    if (result != STATUS_SUCCESS) return data_frame_make(cmd, result, 0, NULL);
+    return data_frame_make(cmd, STATUS_SUCCESS, sizeof(response), response);
+}
+
 /* ---- On-device field-session auto refresh (CMD 1071/1072) --------------
  * The detector only records a status; the host wants the firmware STATUS_*
  * code plus both UIDs, so the hook keeps its own snapshot. The hook runs in
@@ -2396,10 +2459,8 @@ static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_set(uint16_t cmd, uint
         return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
     }
 
-    uint8_t active_slot = tag_emulation_get_slot();
-    tag_slot_specific_type_t tag_types;
-    tag_emulation_get_specific_types_by_slot(active_slot, &tag_types);
-    if (tag_types.tag_hf != TAG_TYPE_NTAG_215) {
+    /* Arming is only valid for an active, marked NTAG215 Amiibo slot. */
+    if (!nfc_tag_mf0_ntag_is_amiibo_active()) {
         return data_frame_make(cmd, STATUS_INVALID_SLOT_TYPE, 0, NULL);
     }
 
@@ -2409,8 +2470,8 @@ static data_frame_tx_t *cmd_processor_amiibo_auto_refresh_set(uint16_t cmd, uint
     memset(m_auto_new_uid, 0, sizeof(m_auto_new_uid));
     m_auto_last_status = STATUS_SUCCESS;
     m_auto_last_ok = false;
-    /* The NTAG215 check above still gates arming, but once armed the detector
-     * applies to every slot: switching slots must not disarm it. */
+    /* The active-Amiibo check above still gates arming, but once armed the
+     * detector applies to every slot: switching slots must not disarm it. */
     nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, data[1] != 0);
     /* Persist only after arming succeeds. A flash failure is logged, never
      * surfaced in the CMD 1071 response. */
@@ -2476,6 +2537,14 @@ static data_frame_tx_t *cmd_processor_mf0_ntag_write_emu_page_data(uint16_t cmd,
     nfc_tag_mf0_ntag_information_t *info = (nfc_tag_mf0_ntag_information_t *)buffer->buffer;
 
     memcpy(&info->memory[page_index][0], &data[2], byte_length);
+
+    /* Page 4 may now carry (or have lost) the Amiibo 0xA5 marker. Refresh the
+     * marker FIRST so the golden snapshot is captured/invalidated against the
+     * new mark (a cleared marker must drop the stale golden, not preserve it). */
+    nfc_tag_mf0_ntag_update_amiibo_mark();
+    /* Host page writes are intentional: update the golden snapshot so a later
+     * scan restores these bytes rather than the pre-write state. */
+    nfc_tag_mf0_ntag_update_golden_snapshot();
 
     /* Explicit slot data upload/write: a global arm from CMD 1071 must not
      * survive new data being written into the emulated tag. */
@@ -2557,6 +2626,7 @@ static data_frame_tx_t *cmd_processor_mf0_ntag_set_signature_data(uint16_t cmd, 
     uint8_t *signature_data = nfc_tag_mf0_ntag_get_signature_data();
     if (signature_data == NULL) return data_frame_make(cmd, STATUS_INVALID_SLOT_TYPE, 0, NULL);
     memcpy(signature_data, data, NFC_TAG_MF0_NTAG_SIG_SIZE);
+    nfc_tag_mf0_ntag_update_amiibo_mark();
 
     return data_frame_make(cmd, STATUS_SUCCESS, 0, NULL);
 }
@@ -5089,6 +5159,8 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_AMIIBO_AUTO_REFRESH_SET,      NULL,                        cmd_processor_amiibo_auto_refresh_set,       NULL                   },
     {    DATA_CMD_AMIIBO_AUTO_REFRESH_GET,      NULL,                        cmd_processor_amiibo_auto_refresh_get,       NULL                   },
     {    DATA_CMD_AMIIBO_VERIFY_SLOT,            NULL,                        cmd_processor_amiibo_verify_slot,            NULL                   },
+    {    DATA_CMD_AMIIBO_SET_SLOT_MARK,          NULL,                        cmd_processor_amiibo_set_slot_mark,          NULL                   },
+    {    DATA_CMD_AMIIBO_GET_SLOT_MARK,          NULL,                        cmd_processor_amiibo_get_slot_mark,          NULL                   },
     {    DATA_CMD_SET_BLE_NAME,                 NULL,                        cmd_processor_set_ble_name,                  NULL                   },
 
 #if defined(PROJECT_CHAMELEON_ULTRA)

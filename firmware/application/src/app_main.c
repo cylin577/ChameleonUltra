@@ -53,6 +53,7 @@ NRF_LOG_MODULE_REGISTER();
 #include "nfc_amiibo_auto_refresh_button.h"
 #include "nfc_amiibo_auto_refresh_feedback.h"
 #include "nfc_amiibo_refresh_feedback.h"
+#include "nfc_mf0_ntag.h"       // nfc_tag_mf0_ntag_is_amiibo_active(), NS2 main-loop gate
 #include "settings.h"
 #include "logflash.h"
 #include "app_standalone.h"
@@ -1442,6 +1443,9 @@ static void fds_idle_gc_maybe(void) {
      * than a GC landing mid-command. */
     if (app_standalone_get_state() != STANDALONE_STATE_DISARMED) return;
     if (g_is_ble_connected) return;
+    /* A GC busy-wait of several seconds during an active NFC scan starves
+     * NFCT/LED servicing and can trip the watchdog (watchdog -> DFU reset). */
+    if (g_is_tag_emulating) return;
 
     fds_stat_t stat;
     if (fds_stat(&stat) != NRF_SUCCESS) return;
@@ -1491,6 +1495,32 @@ static void wdt_feed_inherited(void) {
 /* Drain deferred log lines so a stall shows how far init got. */
 #define BOOT_STEP(name) do { wdt_feed_inherited(); NRF_LOG_INFO("boot: " name); while (NRF_LOG_PROCESS()); } while (0)
 
+/* --- NS2-compatibility main-loop gate ------------------------------------
+ * CMD 2020 classic sniff mode makes NS2 scans 100% reliable because its tight
+ * 1 ms WDT-fed loop never reaches data_frame_process(), logflash_poll(),
+ * usb_poll() or blink_usb_led_status(). Give marked Amiibo slots the same
+ * quiet main loop without entering sniff mode.
+ *
+ * The gate is bounded to an active field (g_is_tag_emulating is set on
+ * FIELD_DETECTED and cleared on FIELD_LOST), so USB/host control returns as
+ * soon as the field ends. A conservative timeout also releases the gate if a
+ * field somehow gets stuck, so a lost FIELD_LOST event cannot block the host
+ * forever. WDT feeding stays outside the gate. Non-Amiibo slots and the
+ * no-field idle loop are untouched. */
+#define NS2_COMPAT_FIELD_TIMEOUT_MS 2000u
+
+static uint32_t m_ns2_compat_field_since = 0;
+
+static bool ns2_compat_should_gate(void) {
+    if (!g_is_tag_emulating || !nfc_tag_mf0_ntag_is_amiibo_active()) {
+        m_ns2_compat_field_since = 0;   /* no field (or not Amiibo): normal loop */
+        return false;
+    }
+    uint32_t now = bsp_timer_now_ms();
+    if (m_ns2_compat_field_since == 0) m_ns2_compat_field_since = now;
+    return (uint32_t)(now - m_ns2_compat_field_since) < NS2_COMPAT_FIELD_TIMEOUT_MS;
+}
+
 int main(void) {
     wdt_feed_inherited();
     ensure_regout0_3v3();   /* self-heal VDD rail after any UICR erase */
@@ -1535,13 +1565,11 @@ int main(void) {
     check_wakeup_src();       // Detect wake-up source and decide BLE broadcast and subsequent hibernation action according to the wake-up source
     BOOT_STEP("wakeup");
     tag_mode_enter();         // Enter card emulation mode by default
-    /* Re-arm CMD 1071 auto refresh from flash, only for a valid NTAG215 slot. */
+    /* Re-arm CMD 1071 auto refresh from flash, only for an active Amiibo slot. */
     {
         uint8_t active_slot = tag_emulation_get_slot();
-        tag_slot_specific_type_t active_types;
-        tag_emulation_get_specific_types_by_slot(active_slot, &active_types);
         if (nfc_amiibo_auto_refresh_store_restore(
-                active_slot, active_types.tag_hf == TAG_TYPE_NTAG_215)) {
+                active_slot, nfc_tag_mf0_ntag_is_amiibo_active())) {
             nfc_amiibo_auto_refresh_disarm_led();  /* boot cleared a rejected arming */
         }
     }
@@ -1563,6 +1591,8 @@ int main(void) {
 
         // Deferred Amiibo refresh after a stable field-loss session. Main loop
         // only: the NFCT ISR must never run the crypto/FDS refresh core.
+        // Kept on purpose: it early-outs while disarmed/no field, so armed
+        // auto-refresh still fires even inside the NS2-compatible quiet loop.
         nfc_amiibo_auto_refresh_process(bsp_timer_now_ms());
 
         // Proactive FDS GC while idle — keeps dirty records low so an on-demand
@@ -1581,25 +1611,35 @@ int main(void) {
         desfire_random_pump();
 #endif
 
+        // NS2-compatible quiet loop for marked Amiibo field sessions. Suspend
+        // exactly the work CMD 2020 sniff mode suspends; the field-bound gate
+        // and its timeout live in ns2_compat_should_gate().
+        bool ns2_compat_active = ns2_compat_should_gate();
+
         // Led blink at usb status (only if field generator is off)
-        if (!m_is_field_on) {
+        if (!m_is_field_on && !ns2_compat_active) {
             blink_usb_led_status();
         }
 
         // Deferred refresh/arm/disarm LED animation (no delay in CMD path).
         // Runs after the USB LED effect so the feedback wins while active.
+        // Kept outside the gate: this is the cheap LED feedback path.
         nfc_amiibo_refresh_feedback_process(&m_amiibo_refresh_fb,
                                             bsp_timer_now_ms(),
                                             refresh_feedback_step, NULL);
 
         // Data pack process
-        data_frame_process();
+        if (!ns2_compat_active) {
+            data_frame_process();
+        }
         // Log print process
         while (NRF_LOG_PROCESS());
-        logflash_poll();
-        // USB event process
-        usb_poll();
-        // WDT refresh
+        if (!ns2_compat_active) {
+            logflash_poll();
+            // USB event process
+            usb_poll();
+        }
+        // WDT refresh — every iteration, even inside the quiet loop
         bsp_wdt_feed();
         // No task to process, system sleep enter.
         // If system idle sometime, we can enter deep sleep state.

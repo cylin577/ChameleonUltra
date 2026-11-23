@@ -179,9 +179,9 @@ static bool test_restore_ignores_slot_and_keeps_record_off_ntag(void) {
     reset();
     CHECK(nfc_amiibo_auto_refresh_store_save(true, NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true));
     nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true);
-    CHECK(nfc_amiibo_auto_refresh_store_restore(2, false));  /* non-NTAG215: cue */
+    CHECK(nfc_amiibo_auto_refresh_store_restore(2, false));  /* non-Amiibo: cue */
     CHECK(!nfc_amiibo_auto_refresh_is_armed());
-    CHECK(m_present);  /* record kept for a later NTAG215 boot */
+    CHECK(m_present);  /* record kept for a later Amiibo boot */
     return true;
 }
 

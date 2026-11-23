@@ -63,6 +63,15 @@ void sleep_timer_start(uint32_t time_ms) {
  *@param sysOff: The system off function implement.
  */
 void sleep_system_run(void (*sysOffSleep)(), void (*sysOnSleep)()) {
+    // While a tag is emulating the NFCT IRQ must answer REQA/anticollision
+    // within strict timing. sysOnSleep() -> nrf_pwr_mgmt_run() -> sd_app_evt_wait()
+    // adds wake/preemption jitter, so keep the CPU awake for the whole field
+    // session, the same way sleep_timer_start() holds off sleep for USB/BLE.
+    // All other states keep the sleep behavior below unchanged.
+    if (g_is_tag_emulating) {
+        return;
+    }
+
     // No task to process, sleep enter
     if (m_system_off_enter) {
         m_system_off_enter = false;

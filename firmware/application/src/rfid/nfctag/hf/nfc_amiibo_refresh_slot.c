@@ -11,6 +11,7 @@
 #include "nfc_amiibo_keys_store.h"
 #include "nfc_amiibo_refresh_slot.h"
 #include "nfc_amiibo_refresh_sleep.h"
+#include "nfc_amiibo_slot_mark.h"
 #include "nfc_amiibo_uid_refresh.h"
 #include "settings.h"
 #include "syssleep.h"
@@ -75,12 +76,11 @@ static uint16_t nfc_amiibo_refresh_slot_impl(bool persist, uint8_t out_old_uid[7
         return STATUS_DEVICE_MODE_ERROR;
     }
 
-    uint8_t active_slot = tag_emulation_get_slot();
-    tag_slot_specific_type_t active_slot_tag_types;
-    tag_emulation_get_specific_types_by_slot(active_slot, &active_slot_tag_types);
-    if (active_slot_tag_types.tag_hf != TAG_TYPE_NTAG_215) {
+    /* The active slot must be a marked NTAG215 Amiibo, not merely any NTAG215. */
+    if (!nfc_tag_mf0_ntag_is_amiibo_active()) {
         return STATUS_INVALID_SLOT_TYPE;
     }
+    uint8_t active_slot = tag_emulation_get_slot();
 
     tag_data_buffer_t *buffer = get_buffer_by_tag_type(TAG_TYPE_NTAG_215);
     if (buffer == NULL) {
@@ -140,6 +140,9 @@ static uint16_t nfc_amiibo_refresh_slot_impl(bool persist, uint8_t out_old_uid[7
         uint16_t crc;
         calc_14a_crc_lut((uint8_t *)info, AMIIBO_NTAG215_INFO_SIZE, (uint8_t *)&crc);
         *buffer->crc = crc;
+        /* The refreshed data is intentional: make it the new golden so later
+         * scans restore it instead of the pre-refresh snapshot. */
+        nfc_tag_mf0_ntag_update_golden_snapshot();
     }
     tag_emulation_sense_switch(TAG_SENSE_HF, true);
 
@@ -178,7 +181,6 @@ uint16_t nfc_amiibo_verify_slot(uint8_t out_uid[7], uint8_t *reason) {
     uint8_t uid[NFC_AMIIBO_UID_REFRESH_UID_SIZE] = { 0 };
     uint8_t verify_reason = NFC_AMIIBO_VERIFY_REASON_OTHER;
     uint16_t result = STATUS_SUCCESS;
-    tag_slot_specific_type_t types;
 
     /* Restore the persisted keys if the RAM working copy is empty (reboot). */
     if (!nfc_amiibo_uid_refresh_keys_ready()) {
@@ -188,10 +190,9 @@ uint16_t nfc_amiibo_verify_slot(uint8_t out_uid[7], uint8_t *reason) {
     if (g_is_tag_emulating) {
         result = STATUS_DEVICE_MODE_ERROR;
     } else {
-        tag_emulation_get_specific_types_by_slot(tag_emulation_get_slot(), &types);
         tag_data_buffer_t *buffer = NULL;
         uint8_t *signature = NULL;
-        if (types.tag_hf != TAG_TYPE_NTAG_215) {
+        if (!nfc_tag_mf0_ntag_is_amiibo_active()) {
             verify_reason = NFC_AMIIBO_VERIFY_REASON_NOT_NTAG215;
         } else if ((buffer = get_buffer_by_tag_type(TAG_TYPE_NTAG_215)) == NULL) {
             verify_reason = NFC_AMIIBO_VERIFY_REASON_NOT_NTAG215;
@@ -204,7 +205,14 @@ uint16_t nfc_amiibo_verify_slot(uint8_t out_uid[7], uint8_t *reason) {
             nfc_amiibo_uid_refresh_status_t status = nfc_amiibo_uid_refresh_validate_apply(
                 dump, signature, uid, NULL);
             verify_reason = amiibo_verify_reason(status);
-            if (status != NFC_AMIIBO_UID_REFRESH_OK) {
+            if (status == NFC_AMIIBO_UID_REFRESH_OK) {
+                /* A confirmed Amiibo gets marked so the NS2 emulation patches
+                 * activate; an explicitly locked marker keeps its value. */
+                bool is_amiibo = info->config.is_amiibo;
+                nfc_amiibo_slot_mark_update(info->config.amiibo_mark_locked,
+                                            true, &is_amiibo);
+                info->config.is_amiibo = is_amiibo;
+            } else {
                 memset(uid, 0, sizeof(uid));
             }
         }
