@@ -724,6 +724,7 @@ firmware/application/src/tests/test_nfc_amiibo_auto_refresh_button
 firmware/application/src/tests/test_nfc_amiibo_auto_refresh_feedback
 firmware/application/src/tests/test_tag_mode_reload_gc
 firmware/application/src/tests/test_syssleep_tag_guard
+firmware/application/src/tests/test_ns2_compat_gate
 firmware/application/src/rfid/nfctag/lf/tests/test_fdxb_modulator
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_uid_refresh
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_keys_store
