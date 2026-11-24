@@ -2414,6 +2414,13 @@ static nfc_amiibo_uid_refresh_status_t auto_refresh_hook(
      * not disarm. The refresh core resolves the active slot itself. */
     (void)slot;
 
+    /* Auto refresh applies only to marked Amiibo field sessions. Bail out
+     * before the refresh core: no crypto/FDS work and no single error blink
+     * for a non-Amiibo slot. Arming persists across slot switches and wake. */
+    if (!nfc_tag_mf0_ntag_is_amiibo_active()) {
+        return NFC_AMIIBO_UID_REFRESH_INVALID_ARGUMENT;
+    }
+
     uint16_t status = nfc_amiibo_refresh_slot(persist, old_uid, new_uid);
     m_auto_last_status = status;
     m_auto_last_ok = (status == STATUS_SUCCESS);

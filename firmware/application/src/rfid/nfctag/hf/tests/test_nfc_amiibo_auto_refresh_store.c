@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "nfc_amiibo_auto_refresh.h"
@@ -166,7 +167,7 @@ static bool test_disable_clear_removes_record(void) {
     return true;
 }
 
-static bool test_restore_ignores_slot_and_keeps_record_off_ntag(void) {
+static bool test_restore_keeps_arming_off_ntag(void) {
     reset();
     /* A legacy single-slot record no longer conflicts with another active slot. */
     CHECK(nfc_amiibo_auto_refresh_store_save(true, 3, false));
@@ -176,12 +177,19 @@ static bool test_restore_ignores_slot_and_keeps_record_off_ntag(void) {
     CHECK(nfc_amiibo_auto_refresh_slot() == NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL);
     CHECK(m_present);  /* record kept */
 
+    /* Booting/waking on a non-Amiibo slot must not reject a persisted arm:
+     * no disarm cue, arming survives with SLOT_ALL and the record stays intact.
+     * The refresh hook filters non-Amiibo field sessions instead. */
     reset();
     CHECK(nfc_amiibo_auto_refresh_store_save(true, NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true));
-    nfc_amiibo_auto_refresh_arm(NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL, true);
-    CHECK(nfc_amiibo_auto_refresh_store_restore(2, false));  /* non-Amiibo: cue */
-    CHECK(!nfc_amiibo_auto_refresh_is_armed());
-    CHECK(m_present);  /* record kept for a later Amiibo boot */
+    nfc_amiibo_auto_refresh_disarm();
+    nfc_amiibo_auto_refresh_set_scan_count(5);
+    CHECK(!nfc_amiibo_auto_refresh_store_restore(2, false));
+    CHECK(nfc_amiibo_auto_refresh_is_armed());
+    CHECK(nfc_amiibo_auto_refresh_slot() == NFC_AMIIBO_AUTO_REFRESH_SLOT_ALL);
+    CHECK(nfc_amiibo_auto_refresh_persist());
+    CHECK(nfc_amiibo_auto_refresh_scan_count() == 0);
+    CHECK(m_present);
     return true;
 }
 
@@ -266,6 +274,70 @@ static bool test_write_delete_failures(void) {
     return true;
 }
 
+/* ---- Source assertion: hook filters non-Amiibo field sessions ------------ */
+static char *read_source(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long n = ftell(f);
+    if (n < 0) { fclose(f); return NULL; }
+    rewind(f);
+    char *buf = (char *)malloc((size_t)n + 1);
+    if (buf == NULL) { fclose(f); return NULL; }
+    size_t got = fread(buf, 1, (size_t)n, f);
+    buf[got] = '\0';
+    fclose(f);
+    return buf;
+}
+
+/* Brace-matched body of a function, copied and NUL-terminated for strstr. */
+static const char *function_body(const char *src, const char *signature) {
+    const char *start = strstr(src, signature);
+    if (start == NULL) return NULL;
+    const char *body = strchr(start, '{');
+    if (body == NULL) return NULL;
+    int depth = 0;
+    const char *end = NULL;
+    for (const char *p = body; *p != '\0'; ++p) {
+        if (*p == '{') depth++;
+        if (*p == '}' && --depth == 0) { end = p + 1; break; }
+    }
+    if (end == NULL) return NULL;
+    static char scoped[8192];
+    size_t len = (size_t)(end - body);
+    if (len >= sizeof(scoped)) len = sizeof(scoped) - 1;
+    memcpy(scoped, body, len);
+    scoped[len] = '\0';
+    return scoped;
+}
+
+static bool in_order(const char *hay, const char *first, const char *second) {
+    if (hay == NULL) return false;
+    const char *p = strstr(hay, first);
+    if (p == NULL) return false;
+    return strstr(p + strlen(first), second) != NULL;
+}
+
+static bool test_auto_refresh_hook_guard(void) {
+    char *src = read_source("../../../../app_cmd.c");
+    CHECK(src != NULL);
+    if (src == NULL) return false;
+    const char *body = function_body(src, "static nfc_amiibo_uid_refresh_status_t auto_refresh_hook(");
+    CHECK(body != NULL);
+    if (body == NULL) { free(src); return false; }
+
+    const char *guard = "if (!nfc_tag_mf0_ntag_is_amiibo_active())";
+    const char *invalid = "return NFC_AMIIBO_UID_REFRESH_INVALID_ARGUMENT;";
+    const char *call = "nfc_amiibo_refresh_slot(persist, old_uid, new_uid)";
+    CHECK(strstr(body, guard) != NULL);
+    CHECK(in_order(body, guard, invalid));
+    CHECK(in_order(body, guard, call));
+    /* The guard's early return must precede the refresh call, not follow it. */
+    CHECK(in_order(strstr(body, guard), invalid, call));
+    free(src);
+    return true;
+}
+
 int main(void) {
     struct {
         const char *name;
@@ -275,11 +347,12 @@ int main(void) {
         {"restore re-arms with scan count 0", test_restore_rearms_with_count_zero},
         {"restore disarms and clears a corrupt record", test_restore_clears_corrupt_record},
         {"disable clear removes the persisted record", test_disable_clear_removes_record},
-        {"restore ignores active slot and keeps record off NTAG215", test_restore_ignores_slot_and_keeps_record_off_ntag},
+        {"restore keeps arming on a non-Amiibo active slot", test_restore_keeps_arming_off_ntag},
         {"absent record and no backend are safe", test_absent_and_no_backend_are_safe},
         {"repeated restore does not double-arm", test_repeated_restore_no_double_arm},
         {"load rejects malformed records", test_load_rejects_malformed_records},
         {"write and delete failures are reported", test_write_delete_failures},
+        {"hook guards non-Amiibo field sessions", test_auto_refresh_hook_guard},
     };
     int failed = 0;
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
