@@ -104,6 +104,8 @@ static bool parse_apdu(const uint8_t *a, uint16_t n, f2_apdu_t *out) {
     if (n < 5) return true;               /* case 1: no data, no Le */
 
     if (a[4] == 0) {
+        /* 7-byte 00 LL LL with nonzero LL LL and no data is extended Le-only. */
+        if (n == 7 && (a[5] != 0 || a[6] != 0)) return true;
         /* Extended Lc: 00 LL LL. Le-only extended APDUs have LL LL = 00 00. */
         if (n < 7) return true;
         uint16_t ext = ((uint16_t)a[5] << 8) | a[6];
@@ -140,7 +142,7 @@ static void stage_full(const uint8_t *d, uint16_t n) {
 static uint16_t resp_frag(void) {
     uint16_t fsd = nfc_tag_14a_get_reader_fsd();
     if (fsd < 8 || fsd > NFC_14A_4_MAX_APDU) fsd = 32;
-    uint16_t frag = fsd - 2;   /* FSD minus the frame's two CRC bytes */
+    uint16_t frag = fsd - 4;   /* FSD minus PCB + optional CID + two CRC bytes */
     if (frag < 4) frag = 4;
     if (frag > NFC_14A_4_MAX_APDU) frag = NFC_14A_4_MAX_APDU;
     return frag;
@@ -431,11 +433,13 @@ bool f2_nfc_available(void) {
 void f2_nfc_poll(void) {
     if (!s_installed) return;
 
-    /* Field entry is user presence. Grant the core's UP gate once per tap;
-     * the first UP-requiring command consumes it there. UV is never granted. */
+    /* Field entry is user presence. A tap grants UP+UV once per tap, matching
+     * the physical-button behavior; the first gated command consumes it. WebKit
+     * sends options.uv=true on nearly every ceremony, so NFC must grant UV too. */
     if (s_field_presence) {
         s_field_presence = false;
         (void)f2_core_grant(FIDO2_GATE_UP);
+        (void)f2_core_grant(FIDO2_GATE_UV);
     }
 
     /* A core timeout/CANCEL status replaces any held request. */
