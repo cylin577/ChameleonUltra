@@ -17,7 +17,9 @@
  *              init(); disarming is the way to hand the field back.
  *
  * User presence / verification:
- *   ACTION (short press, bound to STANDALONE_ACTION) -> grant UP + UV together
+ *   Any physical press (A or B) while armed -> grant UP + UV together, via
+ *   mode_fido2_raw_press_grant() from the app_main button edge hook. No
+ *   `hw settings btnpress` binding is required.
  *   TOGGLE (long press) -> framework arm/disarm, never intercepted here
  *   No CLEAR / very-long-press gesture is used for UV.
  *
@@ -31,6 +33,8 @@
 
 #include "app_standalone.h"
 #include "standalone_led.h"
+
+#include "standalone_modes/mode_fido2.h"
 
 #include "nrf_log.h"
 #include "bsp/bsp_time.h"
@@ -101,23 +105,21 @@ static standalone_rc_t on_exit(void) {
  * Buttons
  * ------------------------------------------------------------------------- */
 
-static standalone_rc_t on_button(standalone_button_evt_t evt) {
-    if (!s_active) return STANDALONE_RC_INVALID_STATE;
+/* Raw press hook from app_main: grants UP then UV on any physical press.
+ * UV is granted last because the core treats UV as satisfying a UP gate too,
+ * so one press works for either ceremony. No CLEAR / very-long UV gesture. */
+void mode_fido2_raw_press_grant(void) {
+    if (!s_active) return;
 
-    /* STANDALONE_BTN_BOTH_LONG is the framework's arm/disarm toggle; leaving
-     * it in the default case keeps the framework's behaviour intact. */
-    switch (evt) {
-        case STANDALONE_BTN_BOTH_SHORT: {
-            /* One short gesture grants UP then UV. UV is granted last because
-             * the core treats UV as satisfying a UP gate too, so this single
-             * press works for either ceremony. No CLEAR / very-long UV gesture. */
-            (void)f2_core_grant(FIDO2_GATE_UP);
-            bool granted = (f2_core_grant(FIDO2_GATE_UV) == FIDO2_ST_OK);
-            standalone_feedback(granted ? SL_FB_SUCCESS : SL_FB_DENIED);
-            break;
-        }
-        default: return STANDALONE_RC_OK;
-    }
+    (void)f2_core_grant(FIDO2_GATE_UP);
+    bool granted = (f2_core_grant(FIDO2_GATE_UV) == FIDO2_ST_OK);
+    standalone_feedback(granted ? SL_FB_SUCCESS : SL_FB_DENIED);
+}
+
+static standalone_rc_t on_button(standalone_button_evt_t evt) {
+    /* STANDALONE_BTN_BOTH_LONG is the framework's arm/disarm toggle; it is
+     * never intercepted here. UP/UV are now owned by the raw press hook. */
+    (void)evt;
     return STANDALONE_RC_OK;
 }
 

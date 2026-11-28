@@ -755,7 +755,7 @@ library's own FDS records.
 ```
 STANDALONE_FIDO2=1 ./build.sh          # build flag, off by default
 standalone set-mode fido2
-standalone trigger                     # arm (or the TOGGLE button)
+standalone trigger                     # arm (long press arms only if bound to TOGGLE)
 #  USB: plug in and use it as a security key
 #  NFC: tap it on a reader
 #  BLE: pair and use it as a BLE security key
@@ -763,20 +763,15 @@ standalone status                      # includes live fido2 status lines
 standalone disarm
 ```
 
-**Buttons:** bind a short press to `STANDALONE_ACTION` with `hw settings
-btnpress`; that one gesture grants **both** UP (user presence) and UV (user
-verification). No `STANDALONE_CLEAR` binding is needed for UV. Bind **both**
-buttons A and B to `STANDALONE_ACTION` (short) to get the expected "short press
-on either key" behaviour. A long press bound to `STANDALONE_TOGGLE` stays the
-framework's arm/disarm toggle and is not intercepted here; arming also works
-from the host with `standalone trigger`. Grant failures flash red; successes
-flash green.
-
-```
-hw settings btnpress -a -s -f STANDALONE_ACTION
-hw settings btnpress -b -s -f STANDALONE_ACTION
-hw settings store
-```
+**Buttons:** **no `hw settings btnpress` binding is required.** While FIDO2 is
+armed, **any** physical press of **A or B** grants **both** UP (user presence)
+and UV (user verification) automatically, even when the buttons have no
+bindings at all. Grants fire once per press, before any binding logic, so
+button settings cannot suppress them. No `STANDALONE_ACTION` or
+`STANDALONE_CLEAR` binding is needed for UP/UV. A long press only acts as the
+framework's arm/disarm toggle **if** it is bound to `STANDALONE_TOGGLE`; there
+is no dedicated FIDO2 gesture. Arming also works from the host with
+`standalone trigger`. Grant failures flash red; successes flash green.
 
 A host **can** grant both gates directly with `hw fido2 grant up|uv` (wire
 command 7020), so no physical gesture is required; `standalone trigger` only

@@ -58,6 +58,9 @@ NRF_LOG_MODULE_REGISTER();
 #include "logflash.h"
 #include "app_standalone.h"
 #include "standalone_led.h"
+#if CONFIG_STANDALONE_FIDO2
+#include "standalone_modes/mode_fido2.h"
+#endif
 
 #if defined(PROJECT_CHAMELEON_ULTRA)
 #include "rc522.h"
@@ -1225,6 +1228,16 @@ static void button_process_edge(int idx, const app_button_edge_t *edge) {
                                                                  edge->ticks,
                                                                  APP_TIMER_TICKS(APP_BUTTON_GESTURE_MIN_TAP_MS),
                                                                  APP_TIMER_TICKS(BTN_LONG_PRESS_MS));
+
+#if CONFIG_STANDALONE_FIDO2
+    /* FIDO2 grants UP+UV on any raw physical press while armed, regardless of
+     * `hw settings btnpress` bindings (including none at all). */
+    if (!was_pressed && gesture->pressed &&
+        app_standalone_get_state() != STANDALONE_STATE_DISARMED &&
+        app_standalone_get_mode() == STANDALONE_MODE_FIDO2) {
+        mode_fido2_raw_press_grant();
+    }
+#endif
 
     /* The button must be registered when ANY binding is set: the short
      * press, the long press or a multi-tap binding. */
