@@ -26,6 +26,9 @@
  */
 #define FDS_STANDALONE_FILE_ID              0x1010
 
+/* FIDO2 resident credentials, keys 0x0001-0x0010; well below Peer Manager's 0xBFFF. */
+#define FDS_FIDO2_FILE_ID                   0x1011
+
 /*
  * Each card slot has two types of data, high and low frequency
  * FDS file ID follows the card slot, starting from 0x1100 to 0x1107

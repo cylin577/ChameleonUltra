@@ -289,6 +289,13 @@
 #define DATA_CMD_STANDALONE_GET_RESULT_FOR      (7012)
 #define DATA_CMD_STANDALONE_CLEAR_RESULT_FOR    (7013)
 #define DATA_CMD_STANDALONE_GET_STATUS          (7014)
+/* FIDO2 authenticator debug hooks (host-facing; no physical device touch) */
+#define DATA_CMD_FIDO2_GRANT                    (7020)  /* u8 gate: 1=UP, 2=UV */
+#define DATA_CMD_FIDO2_CTAP                     (7021)  /* u8 transport, u8 uv, u8[] ctap -> u8 status, u8[] */
+#define DATA_CMD_FIDO2_CREDS_LIST               (7022)  /* -> text dump */
+#define DATA_CMD_FIDO2_CREDS_RESET              (7023)  /* allowed while DISARMED */
+#define DATA_CMD_FIDO2_STATUS                   (7024)  /* -> text status */
+#define DATA_CMD_FIDO2_U2F_APDU                 (7025)  /* raw APDU -> raw response incl. SW */
 
 #define DATA_CMD_EM410X_SET_EMU_ID              (5000)
 #define DATA_CMD_EM410X_GET_EMU_ID              (5001)

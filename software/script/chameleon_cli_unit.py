@@ -2715,6 +2715,188 @@ class HWSettingsBLEName(DeviceRequiredUnit):
             )
 
 
+# --- FIDO2 authenticator debug hooks (hw fido2 ...) ------------------------
+# Additive only: the whole group is guarded by the device's command map, so on
+# firmware built without CONFIG_STANDALONE_FIDO2 these return STATUS_INVALID_CMD.
+
+hw_fido2 = hw.subgroup("fido2", "FIDO2 authenticator debug hooks (no button presses needed)")
+
+
+class Fido2DbgUnit(DeviceRequiredUnit):
+    """Shared sender for the hw fido2 debug commands."""
+
+    def _send(self, command, data=b"", timeout=5):
+        resp = self.cmd.device.send_cmd_sync(
+            command, data=data, status=0x0, timeout=timeout)
+        if resp.status != Status.SUCCESS:
+            try:
+                name = Status(resp.status).name
+            except ValueError:
+                name = f"0x{resp.status:02x}"
+            print(color_string((CR, f" - {name}")))
+            return None
+        return resp.data
+
+    @staticmethod
+    def _hex_arg(value):
+        try:
+            return bytes.fromhex(value.replace(' ', '').replace('0x', ''))
+        except ValueError:
+            return None
+
+
+@hw_fido2.command("grant")
+class HWFido2Grant(Fido2DbgUnit):
+    """
+    Grant a UP or UV gate from the host.
+
+    The FIDO2 standalone mode must be armed first:
+        standalone set-mode fido2
+        standalone trigger
+        hw fido2 grant up    (or: hw fido2 grant uv)
+    """
+
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'Grant UP or UV from the host'
+        parser.add_argument('gate', choices=['up', 'uv'], help='gate to grant')
+        return parser
+
+    def on_exec(self, args):
+        gate = 1 if args.gate == 'up' else 2
+        if self._send(Command.FIDO2_GRANT, struct.pack('<B', gate)) is not None:
+            print(color_string((CG, f" - granted {args.gate.upper()}")))
+
+
+@hw_fido2.command("ctap")
+class HWFido2Ctap(Fido2DbgUnit):
+    """
+    Inject a raw CTAP2 request and print {status, response}.
+
+    Examples:
+        hw fido2 ctap 04                       (GET_INFO, transport=dbg)
+        hw fido2 ctap 04 --uv                  (with uv_requested=1)
+        hw fido2 ctap 04 --transport nfc
+    """
+
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'Inject a CTAP2 request'
+        parser.add_argument('payload', help='CTAP request, hex')
+        parser.add_argument('--transport', choices=['usb', 'nfc', 'ble', 'dbg'],
+                            default='dbg', help='asserted transport (default: dbg)')
+        parser.add_argument('--uv', action='store_true',
+                            help='set uv_requested in the request')
+        parser.add_argument('-t', '--timeout', type=int, default=10,
+                            help='timeout in seconds (default: 10)')
+        return parser
+
+    def on_exec(self, args):
+        payload = self._hex_arg(args.payload)
+        if payload is None:
+            print(color_string((CR, ' - invalid hex payload')))
+            return
+        transport = ['usb', 'nfc', 'ble', 'dbg'].index(args.transport)
+        req = struct.pack('<BB', transport, 1 if args.uv else 0) + payload
+        data = self._send(Command.FIDO2_CTAP, req, timeout=args.timeout)
+        if data is None:
+            return
+        if not data:
+            print(color_string((CR, ' - empty CTAP response')))
+            return
+        print(f" - ctap status: {color_string((CC, f'0x{data[0]:02x}'))}")
+        if len(data) > 1:
+            print(f" - data (HEX): {data[1:].hex()}")
+
+
+@hw_fido2.command("creds")
+class HWFido2Creds(Fido2DbgUnit):
+    """Dump the resident credential table as text."""
+
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'List FIDO2 resident credentials'
+        return parser
+
+    def on_exec(self, args):
+        data = self._send(Command.FIDO2_CREDS_LIST)
+        if data is None:
+            return
+        text = data.decode('utf-8', errors='replace').rstrip('\x00')
+        if text:
+            print(text)
+        else:
+            print(color_string((CY, ' - no credentials')))
+
+
+@hw_fido2.command("reset")
+class HWFido2Reset(Fido2DbgUnit):
+    """
+    Wipe all FIDO2 credentials and cancel pending gates.
+
+    Works even while the standalone subsystem is DISARMED, so it can be used
+    to clean up after a failed test run.
+    """
+
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'Reset all FIDO2 credentials (works while disarmed)'
+        return parser
+
+    def on_exec(self, args):
+        if self._send(Command.FIDO2_CREDS_RESET) is not None:
+            print(color_string((CG, ' - FIDO2 credentials reset')))
+
+
+@hw_fido2.command("status")
+class HWFido2Status(Fido2DbgUnit):
+    """Print the live authenticator status (gates, counters, state)."""
+
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'Show FIDO2 authenticator status'
+        return parser
+
+    def on_exec(self, args):
+        data = self._send(Command.FIDO2_STATUS)
+        if data is None:
+            return
+        text = data.decode('utf-8', errors='replace').rstrip('\x00')
+        print(text if text else color_string((CY, ' - no status')))
+
+
+@hw_fido2.command("u2f")
+class HWFido2U2F(Fido2DbgUnit):
+    """
+    Inject a raw U2F/CTAP1 APDU and print the response including SW1|SW2.
+
+    Example:
+        hw fido2 u2f 00010000000000000000000000000000000000000000000000000000000000000000000000
+    """
+
+    def args_parser(self) -> ArgumentParserNoExit:
+        parser = ArgumentParserNoExit()
+        parser.description = 'Inject a raw U2F APDU'
+        parser.add_argument('apdu', help='raw APDU, hex (including INS and P1/P2)')
+        parser.add_argument('-t', '--timeout', type=int, default=10,
+                            help='timeout in seconds (default: 10)')
+        return parser
+
+    def on_exec(self, args):
+        apdu = self._hex_arg(args.apdu)
+        if apdu is None:
+            print(color_string((CR, ' - invalid hex APDU')))
+            return
+        data = self._send(Command.FIDO2_U2F_APDU, apdu, timeout=args.timeout)
+        if data is None:
+            return
+        if len(data) >= 2:
+            print(f" - data (HEX): {data[:-2].hex() or '(none)'}  "
+                  f"SW={data[-2]:02X}{data[-1]:02X}")
+        else:
+            print(f" - data (HEX): {data.hex()}")
+
+
 @hw.command("raw")
 class HWRaw(DeviceRequiredUnit):
 
@@ -6449,7 +6631,7 @@ class StandaloneSetMode(DeviceRequiredUnit):
         parser.add_argument('mode', help='mode name (authtrace, emul-trace, relay, slot-cycle, '
                                          'autoclone, read-replay, dict-check, '
                                          'hf14a-tap-sniff, nfc-canary, '
-                                         'gdb-gateway, disabled)')
+                                         'gdb-gateway, fido2, disabled)')
         parser.add_argument('--opt-in', action='store_true',
                             help='set HOST_OPTED_IN flag (required for '
                                  'autoclone and read-replay)')
@@ -7296,6 +7478,12 @@ class StandaloneConfig(DeviceRequiredUnit):
             print(color_string((CY,
                 "emul_trace has no config — it uses the active emulation slot as-is.\n"
                 "Set up your slot normally, then arm the mode.")))
+            return
+
+        if mode == StandaloneMode.FIDO2:
+            print(color_string((CY,
+                "fido2 has no config — credentials live in the authenticator.\n"
+                "Use `hw fido2` to grant gates, list creds, reset, and check status.")))
             return
 
         if mode == StandaloneMode.HF14A_TAP_SNIFF:

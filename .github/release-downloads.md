@@ -1,8 +1,8 @@
 <!-- chameleon-downloads -->
 ## Downloads
 
-Every release attaches 20 firmware artifacts (5 per build) plus GitHub's
-automatically generated source archives, 22 files in total.
+Every release attaches 25 firmware artifacts (5 per build) plus GitHub's
+automatically generated source archives, 27 files in total.
 
 | File | Device / variant | What it is / when to use |
 |---|---|---|
@@ -16,6 +16,11 @@ automatically generated source archives, 22 files in total.
 | `ultra-standalone-dfu-app.zip` | Ultra, standalone | Application-only serial DFU package, standalone modes enabled. |
 | `ultra-standalone-dfu-full.zip` | Ultra, standalone | Full serial DFU package, standalone modes enabled. |
 | `ultra-standalone-fullimage.uf2` | Ultra, standalone | Whole image, standalone modes enabled. |
+| `ultra-fido2-dfu-bl.zip` | Ultra, FIDO2-only | SoftDevice + composite bootloader, FIDO2-only build. |
+| `ultra-fido2-application.uf2` | Ultra, FIDO2-only | Application-only UF2, authenticator-only image (no other standalone modes). Drag-and-drop app updates. |
+| `ultra-fido2-dfu-app.zip` | Ultra, FIDO2-only | Application-only serial DFU package, authenticator-only image. |
+| `ultra-fido2-dfu-full.zip` | Ultra, FIDO2-only | Full serial DFU package, FIDO2-only build. |
+| `ultra-fido2-fullimage.uf2` | Ultra, FIDO2-only | Whole image, FIDO2-only build. |
 | `lite-dfu-bl.zip` | Lite, regular | SoftDevice + composite bootloader. First-time install over serial DFU. |
 | `lite-application.uf2` | Lite, regular | Application-only UF2. Drag-and-drop app updates. |
 | `lite-dfu-app.zip` | Lite, regular | Application-only serial DFU package. |

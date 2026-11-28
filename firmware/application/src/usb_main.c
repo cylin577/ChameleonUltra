@@ -4,6 +4,9 @@
 #if CONFIG_STANDALONE_GDB_GATEWAY
 #include "gdb_rsp.h"
 #endif
+#if CONFIG_STANDALONE_FIDO2
+#include "fido2/fido2_usb_hid.h"
+#endif
 
 #include "app_usbd.h"
 #include "app_usbd_cdc_acm.h"
@@ -159,6 +162,10 @@ void usb_cdc_init(void) {
     ret = app_usbd_class_append(class_cdc_acm);
     APP_ERROR_CHECK(ret);
 
+#if CONFIG_STANDALONE_FIDO2
+    /* Best effort: a HID append failure must not take down the CDC link. */
+    f2_usb_hid_init();
+#endif
 }
 
 void usb_cdc_write(const void *p_buf, uint16_t length) {

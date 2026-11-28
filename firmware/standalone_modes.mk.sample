@@ -30,6 +30,7 @@
 # STANDALONE_ESB_PROMISC     ?= 1   # unknown-address ESB discovery (partial-address correlator sync, experimental)
 # STANDALONE_SPECTRUM        ?= 1   # one-shot 2.4 GHz ISM energy-detect sweep via SoftDevice timeslots
 # STANDALONE_USB_NET         ?= 1   # USB Ethernet + CLI over TCP; swaps USB to TinyUSB + lwIP (run ./fetch_usbnet_deps.sh first, ~10 KB RAM)
+# STANDALONE_FIDO2            ?= 1   # FIDO2/CTAP2 authenticator (Ultra only); USB HID + NFC + BLE, mutually exclusive with STANDALONE_USB_NET
 
 # gdb_gateway tuning (only matters when STANDALONE_GDB_GATEWAY=1):
 # GDB_GATEWAY_EXEC           ?= 0       # 0 = memory/flash only (smaller); 1 = + breakpoints/step

@@ -239,6 +239,14 @@ class Command(enum.IntEnum):
     STANDALONE_CLEAR_RESULT_FOR = 7013
     STANDALONE_GET_STATUS       = 7014
 
+    # FIDO2 authenticator debug hooks (no physical device interaction)
+    FIDO2_GRANT                 = 7020   # u8 gate: 1=UP, 2=UV
+    FIDO2_CTAP                  = 7021   # u8 transport, u8 uv, u8[] -> u8 status, u8[]
+    FIDO2_CREDS_LIST            = 7022   # -> text dump
+    FIDO2_CREDS_RESET           = 7023   # allowed while DISARMED
+    FIDO2_STATUS                = 7024   # -> text status
+    FIDO2_U2F_APDU              = 7025   # raw APDU -> raw response incl. SW
+
     EM410X_SET_EMU_ID = 5000
     EM410X_GET_EMU_ID = 5001
     HIDPROX_SET_EMU_ID = 5002
@@ -882,6 +890,7 @@ class StandaloneMode(enum.IntEnum):
     SPECTRUM    = 0x0E   # one-shot 2.4 GHz ISM energy-detect sweep
     ESB         = 0x0F   # passive ESB-framed RX, known address (e.g. Logitech Unifying)
     ESB_PROMISC = 0x10   # brute-force partial-address ESB sniff, unknown address (experimental)
+    FIDO2       = 0x11   # FIDO2/WebAuthn authenticator (CTAP2 + U2F)
 
     @classmethod
     def from_name(cls, name: str) -> "StandaloneMode":

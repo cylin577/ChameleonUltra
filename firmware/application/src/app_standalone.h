@@ -64,6 +64,7 @@ typedef enum {
     STANDALONE_MODE_SPECTRUM    = 0x0E,  /* one-shot 2.4 GHz ISM energy-detect sweep */
     STANDALONE_MODE_ESB         = 0x0F,  /* passive ESB-framed RX, known address (e.g. Logitech Unifying) */
     STANDALONE_MODE_ESB_PROMISC = 0x10,  /* brute-force partial-address ESB sniff, unknown address */
+    STANDALONE_MODE_FIDO2       = 0x11,  /* FIDO2/CTAP2 authenticator, Ultra only */
 
     STANDALONE_MODE__COUNT              /* sentinel - keep last */
 } standalone_mode_t;
@@ -178,6 +179,7 @@ extern const standalone_mode_iface_t mode_dict_check_iface;   /* needs reader hw
 extern const standalone_mode_iface_t mode_emultrace_iface;     /* NFCT, works on Lite */
 #if defined(PROJECT_CHAMELEON_ULTRA)
 extern const standalone_mode_iface_t mode_relay_iface;         /* BLE peer relay, Ultra only */
+extern const standalone_mode_iface_t mode_fido2_iface;         /* FIDO2/CTAP2 authenticator, Ultra only */
 #endif
 #if defined(PROJECT_CHAMELEON_ULTRA)
 extern const standalone_mode_iface_t mode_hf14a_tap_sniff_iface; /* passive tap sniff, needs reader hw */

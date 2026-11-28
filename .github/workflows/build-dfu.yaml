@@ -22,9 +22,9 @@ jobs:
     name: Build ${{ matrix.device }} (${{ matrix.variant }})
     runs-on: ubuntu-latest
     env:
-      # Empty for the normal image, "-standalone" for the standalone one, so
-      # both variants can ship side by side in a single release.
-      VARIANT_SUFFIX: ${{ matrix.variant == 'standalone' && '-standalone' || '' }}
+      # Distinct suffix per variant so every image ships side by side in a
+      # single release without clobbering names when the release flattens them.
+      VARIANT_SUFFIX: ${{ matrix.variant == 'standalone' && '-standalone' || (matrix.variant == 'fido2' && '-fido2' || '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +43,9 @@ jobs:
           # which the lite build never compiles.
           # Dropped for RAM: RELAY (RC522+BLE), GDB_GATEWAY (RSP), AUTOCLONE/DICT_CHECK (mf1_dict is large).
           # READ_REPLAY added back — fits within RAM budget.
+          # FIDO2 is built in its own dedicated `fido2` variant with only
+          # STANDALONE_FIDO2=1: a clean Ultra build has only ~3.8 KB RAM slack,
+          # and packing it together with the modes below leaves no room for it.
           - device: ultra
             variant: standalone
             standalone_flags: >-
@@ -54,6 +57,11 @@ jobs:
             standalone_flags: >-
               STANDALONE_SLOT_CYCLE=1 STANDALONE_EMUL_TRACE=1 STANDALONE_NFC_CANARY=1
               STANDALONE_GDB_GATEWAY=1
+          # FIDO2-only image: Ultra-only (needs PROJECT_CHAMELEON_ULTRA), and
+          # its RAM budget cannot be shared with the standalone mode set above.
+          - device: ultra
+            variant: fido2
+            standalone_flags: STANDALONE_FIDO2=1
 
     steps:
       - name: Checkout

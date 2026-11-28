@@ -5,14 +5,14 @@ const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const CMD_GET_RESULT = 7004, STATUS_OK = 0x68;
 const CMD_SET_MODE = 7001, CMD_CLEAR = 7005, MODE_EMUL = 6, CMD_GET_MODE = 7000, CMD_TRIGGER = 7006, CMD_DISARM = 7009, MODE_CANARY = 9;
 const STATES = ["disarmed","armed, waiting","mode select","armed, running"];
-const MODES = {0:"none",1:"autoclone",2:"read_replay",3:"authtrace",4:"slot_cycle",5:"dict_check",6:"emul_trace",7:"relay",8:"hf14a_tap_sniff",9:"nfc_canary",10:"gdb_gateway",12:"usb_net",13:"zigbee",14:"spectrum",15:"esb",16:"esb_promisc"};
+const MODES = {0:"none",1:"autoclone",2:"read_replay",3:"authtrace",4:"slot_cycle",5:"dict_check",6:"emul_trace",7:"relay",8:"hf14a_tap_sniff",9:"nfc_canary",10:"gdb_gateway",12:"usb_net",13:"zigbee",14:"spectrum",15:"esb",16:"esb_promisc",17:"fido2"};
 const CMD_EVENT = 7010;
 const CMD_GET_CONFIG = 7002, CMD_SET_CONFIG = 7003, CMD_GET_SIZES = 7007, CMD_RELAY_DIAG = 7008;
 const CMD_GET_STATUS = 7014;
 const CMD_GET_DEVICE_CAPABILITIES = 1035;
 const MODE_AUTHTRACE = 3, MODE_SLOT = 4, MODE_RELAY = 7, MODE_TAP = 8;
 const MODE_AUTOCLONE = 1, MODE_READ_REPLAY = 2, MODE_DICT = 5, MODE_GDB = 10, MODE_USBNET = 12;
-const MODE_ZIGBEE = 13, MODE_SPECTRUM = 14, MODE_ESB = 15, MODE_ESB_PROMISC = 16;
+const MODE_ZIGBEE = 13, MODE_SPECTRUM = 14, MODE_ESB = 15, MODE_ESB_PROMISC = 16, MODE_FIDO2 = 17;
 const ACTION_MODES = [MODE_READ_REPLAY, MODE_AUTOCLONE, MODE_DICT, MODE_SPECTRUM];  /* trigger-driven reader/sweep modes */
 /* zigbee/esb/esb_promisc are continuous passive-receive modes: trigger only
  * arms/disarms them (same as nfc_canary), there is no secondary button
@@ -376,6 +376,8 @@ async function fetchSaved(){
       $("saved").textContent=""; st.textContent="gdb_gateway keeps no log; it serves GDB over USB-CDC.";
     } else if(devMode===MODE_USBNET){
       $("saved").textContent=""; st.textContent="usb_net keeps no log; the CLI is reachable on 192.168.16.1:18888 over USB Ethernet.";
+    } else if(devMode===MODE_FIDO2){
+      $("saved").textContent=""; st.textContent="fido2 keeps no log; debug commands are the interface.";
     } else if(devMode===MODE_READ_REPLAY){
       const recs=parseReadReplay(raw); renderReadReplay(recs);
       st.textContent = recs.length ? recs.length+" clone(s) stored." : "No clones stored.";
@@ -958,7 +960,7 @@ $("clrdev").addEventListener("click",()=>guarded(async()=>{
 }));
 $("arm").addEventListener("click",()=>guarded(async()=>{
   await readState();
-  if(![MODE_CANARY,MODE_EMUL,MODE_AUTHTRACE,MODE_SLOT,MODE_RELAY,MODE_TAP,MODE_READ_REPLAY,MODE_AUTOCLONE,MODE_DICT,MODE_GDB,MODE_USBNET,MODE_ZIGBEE,MODE_SPECTRUM,MODE_ESB,MODE_ESB_PROMISC].includes(devMode)){ cmsg("Active mode "+(MODES[devMode]||devMode)+" can't be armed from here."); return; }
+  if(![MODE_CANARY,MODE_EMUL,MODE_AUTHTRACE,MODE_SLOT,MODE_RELAY,MODE_TAP,MODE_READ_REPLAY,MODE_AUTOCLONE,MODE_DICT,MODE_GDB,MODE_USBNET,MODE_ZIGBEE,MODE_SPECTRUM,MODE_ESB,MODE_ESB_PROMISC,MODE_FIDO2].includes(devMode)){ cmsg("Active mode "+(MODES[devMode]||devMode)+" can't be armed from here."); return; }
   if(devState!==0){ cmsg("Already armed."); return; }
   lastSeq=null;
   const f=await request(CMD_TRIGGER);

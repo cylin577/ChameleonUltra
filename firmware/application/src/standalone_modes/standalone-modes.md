@@ -746,6 +746,63 @@ found and fixed in `mode_spectrum.c`; as of this writing that fix is built but n
 confirmed clean on real hardware -- if `get-result` ever again returns what looks like a
 duplicate record, that's the first thing to re-check.
 
+## `fido2` ,  FIDO2 / CTAP2 authenticator  *(Ultra only, needs `STANDALONE_FIDO2=1`)*
+
+Turns the CU into a software authenticator reachable over **USB HID, NFC and BLE
+at the same time**. No card or slot is written; credentials live in the FIDO2
+library's own FDS records.
+
+```
+STANDALONE_FIDO2=1 ./build.sh          # build flag, off by default
+standalone set-mode fido2
+standalone trigger                     # arm (or the TOGGLE button)
+#  USB: plug in and use it as a security key
+#  NFC: tap it on a reader
+#  BLE: pair and use it as a BLE security key
+standalone status                      # includes live fido2 status lines
+standalone disarm
+```
+
+**Buttons:** bind them with `hw settings btnpress`: `STANDALONE_ACTION` (short
+press) grants **UP** (user presence), `STANDALONE_CLEAR` grants **UV** (user
+verification) via the framework's very-long (`BOTH_VLONG`) event, and
+`STANDALONE_TOGGLE` (long press) stays the framework's arm/disarm toggle. The
+CLI has short and long press binding slots; binding the CLEAR function to a
+button is what produces the very-long event the mode sees. Grant failures flash
+red; successes flash green.
+
+```
+hw settings btnpress -a -s -f STANDALONE_ACTION   # A short: grant UP
+hw settings btnpress -a -l -f STANDALONE_TOGGLE   # A long: framework arm/disarm
+hw settings btnpress -b -l -f STANDALONE_CLEAR    # B long: grant UV (very-long event)
+hw settings store
+```
+
+A host **can** grant both gates directly with `hw fido2 grant up|uv` (wire
+command 7020), so no physical gesture is required; `standalone trigger` only
+arms the mode.
+
+**Honest caveat:** UV from a button is a local bench convenience, not
+FIDO-certified identity verification (no PIN or biometric factor). Do not treat
+a relying party's `(UV)` bit from this device as proof of identity.
+
+**Debug interface:** `hw fido2 ...` exposes the core for bench testing: `status`
+(the same `f2_core_status()` lines shown by `standalone status`), `grant`, `ctap`,
+`creds-list`, `creds-reset`, and `u2f-apdu` (wire commands 7020-7025). Everything
+except `creds-reset` requires FIDO2 mode armed. Run `hw fido2` in your build for
+the exact subcommand spelling. The mode produces **no result blob**
+(`standalone get-result` is unused), and writes no standalone FDS result records.
+
+**CI / RAM tradeoff:** FIDO2 is opt-in (`STANDALONE_FIDO2=1`, off by default).
+A clean Ultra build has about 3.8 KB of RAM slack, so FIDO2 is **not** added to
+the combined `-standalone` CI image, which already packs many other modes.
+Build a dedicated FIDO2 image if you want it.
+
+**USB-NET mutual exclusion:** do not enable `STANDALONE_USB_NET=1` and
+`STANDALONE_FIDO2=1` in the same build. `usb-net` replaces the nRF SDK USB
+stack with TinyUSB + lwIP, while FIDO2 USB HID uses the SDK HID class
+(`app_usbd_hid` / `app_usbd_hid_generic`). Pick one USB personality per build.
+
 ## `--opt-in` and quiet flags
 
 `set-mode` takes optional flags:

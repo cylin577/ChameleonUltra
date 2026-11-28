@@ -27,6 +27,9 @@
 #if CONFIG_STANDALONE_GDB_GATEWAY
 #include "gdb_rsp.h"
 #endif
+#if CONFIG_STANDALONE_FIDO2
+#include "fido2/fido2_ble.h"
+#endif
 
 #define NRF_LOG_MODULE_NAME ble_main
 #include "nrf_log.h"
@@ -99,6 +102,7 @@ static uint16_t   m_conn_handle          = BLE_CONN_HANDLE_INVALID;             
 static uint16_t   m_ble_nus_max_data_len = BLE_GATT_ATT_MTU_DEFAULT - 3;            /**< Maximum length of data (in bytes) that can be transmitted to the peer by the Nordic UART service module. */
 lf_adc_callback_t m_lf_adc_callback      = NULL;
 
+/* FIDO GATT service is discoverable by GATT scan; not advertised in scan response because adding a third UUID overflows the 31-byte scan response and crashes advertising init. */
 static ble_uuid_t m_adv_uuids[]          =                                          /**< Universally unique service identifier. */
 {
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE},
@@ -360,6 +364,12 @@ static void services_init(void) {
     err_code = ble_bas_init(&m_bas, &bas_init_obj);
     APP_ERROR_CHECK(err_code);
 
+#if CONFIG_STANDALONE_FIDO2
+    /* Best-effort: a full VS-UUID/attribute table must not disable NUS/CLI. */
+    if (m_ble_enabled && !f2_ble_init()) {
+        NRF_LOG_WARNING("FIDO2 BLE GATT service unavailable");
+    }
+#endif
 }
 
 /**@brief Function for handling an event from the Connection Parameters Module.

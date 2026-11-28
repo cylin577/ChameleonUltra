@@ -733,3 +733,5 @@ firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_refresh_feedback
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_14a_hw_coll
 firmware/application/src/rfid/nfctag/hf/tests/test_nfc_amiibo_slot_mark
 firmware/application/src/standalone_modes/tests/test_nfc_canary_core
+firmware/application/src/standalone_modes/tests/test_fido2_cbor
+firmware/application/src/standalone_modes/tests/test_fido2_format

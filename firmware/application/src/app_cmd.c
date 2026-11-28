@@ -5091,6 +5091,16 @@ static data_frame_tx_t *cmd_processor_fdxb_write_to_t55xx(uint16_t cmd, uint16_t
 }
 #endif
 
+/* FIDO2 authenticator debug handlers (7020-7025). */
+#if CONFIG_STANDALONE_FIDO2
+data_frame_tx_t *cmd_handler_fido2_grant(uint16_t, uint16_t, uint16_t, uint8_t *);
+data_frame_tx_t *cmd_handler_fido2_ctap(uint16_t, uint16_t, uint16_t, uint8_t *);
+data_frame_tx_t *cmd_handler_fido2_creds_list(uint16_t, uint16_t, uint16_t, uint8_t *);
+data_frame_tx_t *cmd_handler_fido2_creds_reset(uint16_t, uint16_t, uint16_t, uint8_t *);
+data_frame_tx_t *cmd_handler_fido2_status(uint16_t, uint16_t, uint16_t, uint8_t *);
+data_frame_tx_t *cmd_handler_fido2_u2f_apdu(uint16_t, uint16_t, uint16_t, uint8_t *);
+#endif
+
 static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_GET_APP_VERSION,              NULL,                        cmd_processor_get_app_version,               NULL                   },
     {    DATA_CMD_CHANGE_DEVICE_MODE,           NULL,                        cmd_processor_change_device_mode,            NULL                   },
@@ -5347,6 +5357,16 @@ static cmd_data_map_t m_data_cmd_map[] = {
     {    DATA_CMD_STANDALONE_GET_STATUS,          NULL,                        cmd_handler_standalone_get_status,           NULL                   },
 #if CONFIG_STANDALONE_RELAY
     {    DATA_CMD_STANDALONE_RELAY_DIAG,          NULL,                        cmd_handler_standalone_relay_diag,           NULL                   },
+#endif
+#if CONFIG_STANDALONE_FIDO2
+    /* FIDO2 authenticator debug hooks -- all except CREDS_RESET require the
+     * FIDO2 mode (0x11) to be armed; the handlers enforce that themselves. */
+    {    DATA_CMD_FIDO2_GRANT,                    NULL,                        cmd_handler_fido2_grant,                     NULL                   },
+    {    DATA_CMD_FIDO2_CTAP,                     NULL,                        cmd_handler_fido2_ctap,                      NULL                   },
+    {    DATA_CMD_FIDO2_CREDS_LIST,               NULL,                        cmd_handler_fido2_creds_list,                NULL                   },
+    {    DATA_CMD_FIDO2_CREDS_RESET,              NULL,                        cmd_handler_fido2_creds_reset,               NULL                   },
+    {    DATA_CMD_FIDO2_STATUS,                   NULL,                        cmd_handler_fido2_status,                    NULL                   },
+    {    DATA_CMD_FIDO2_U2F_APDU,                 NULL,                        cmd_handler_fido2_u2f_apdu,                  NULL                   },
 #endif
 };
 data_frame_tx_t *cmd_processor_get_device_capabilities(uint16_t cmd, uint16_t status, uint16_t length, uint8_t *data) {

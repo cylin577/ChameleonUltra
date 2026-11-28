@@ -10,7 +10,7 @@ Phreakbyte is a UF2-bootloader fork of RfidResearchGroup/ChameleonUltra: nRF5284
 
 ## Build & release
 
-- Every push to `main` (touching `firmware/**`) triggers `.github/workflows/build-dfu.yaml`: builds 4 firmware variants (ultra/lite × recovery/standalone) and publishes a `nightly` GitHub release. Tag pushes `v*` publish versioned releases.
+- Every push to `main` (touching `firmware/**`) triggers `.github/workflows/build-dfu.yaml`: builds 5 firmware variants (ultra/lite × recovery/standalone, plus a new ultra FIDO2-only variant) and publishes a `nightly` GitHub release. Tag pushes `v*` publish versioned releases.
 - Device version comes from `git describe` against `v*.*` tags (`firmware/Makefile.defs`); `hw version` reports tag + commits + short hash. Do not rewrite history / expect version bumps without tags.
 - **Local build caveat (this box is arm64):** `nrfutil` is installed but the `nrf5sdk-tools` plugin is not available for arm64, so `build.sh` stops at DFU packaging (`nrfutil nrf5sdk-tools pkg generate`). Firmware still compiles via `make` in `firmware/application` and `firmware/bootloader`; DFU/UF2 artifacts come from GitHub CI. Use `CURRENT_DEVICE_TYPE=ultra|lite`.
 - `firmware/tools/dfu_pkg_check.py` verifies DFU packages (init hash byte order, ECDSA signature, signing key vs the bootloader key); `--legacy` writes a pre-SDK-15 variant.

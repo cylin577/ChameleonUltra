@@ -34,6 +34,7 @@ STANDALONE_ZIGBEE          ?= 0   # disabled by default (passive 802.15.4 receiv
 STANDALONE_SPECTRUM        ?= 0   # disabled by default (one-shot 2.4 GHz ISM energy-detect sweep in SoftDevice timeslots)
 STANDALONE_ESB             ?= 0   # disabled by default (passive ESB-framed RX, known address, in SoftDevice timeslots)
 STANDALONE_ESB_PROMISC     ?= 0   # disabled by default (brute-force partial-address ESB sniff, unknown address -- experimental)
+STANDALONE_FIDO2            ?= 0   # disabled by default (FIDO2/CTAP2 authenticator over USB HID, NFC and BLE; Ultra only)
 
 CFLAGS += -DCONFIG_STANDALONE_AUTHTRACE=$(STANDALONE_AUTHTRACE)
 CFLAGS += -DCONFIG_STANDALONE_SLOT_CYCLE=$(STANDALONE_SLOT_CYCLE)
@@ -50,6 +51,7 @@ CFLAGS += -DCONFIG_STANDALONE_ZIGBEE=$(STANDALONE_ZIGBEE)
 CFLAGS += -DCONFIG_STANDALONE_SPECTRUM=$(STANDALONE_SPECTRUM)
 CFLAGS += -DCONFIG_STANDALONE_ESB=$(STANDALONE_ESB)
 CFLAGS += -DCONFIG_STANDALONE_ESB_PROMISC=$(STANDALONE_ESB_PROMISC)
+CFLAGS += -DCONFIG_STANDALONE_FIDO2=$(STANDALONE_FIDO2)
 CFLAGS += -DCONFIG_GDB_GATEWAY_EXEC=$(GDB_GATEWAY_EXEC)
 CFLAGS += -DCONFIG_GDB_GATEWAY_PKT=$(GDB_GATEWAY_PKT)
 
@@ -321,6 +323,24 @@ ifeq ($(strip $(STANDALONE_ESB_PROMISC)),1)
 SRC_FILES += $(PROJ_DIR)/standalone_modes/mode_esb_promisc.c
 SRC_FILES += $(PROJ_DIR)/esb/esb_promisc_radio.c
 INC_FOLDERS += $(PROJ_DIR)/esb
+endif
+# FIDO2/CTAP2 authenticator. The library files use #include "fido2/..." so
+# $(PROJ_DIR) (already in INC_FOLDERS below) is sufficient; no extra path.
+ifeq ($(strip $(STANDALONE_FIDO2)),1)
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_cbor.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_format.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_crypto.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_creds.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_core.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_transport.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_attestation.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_usb_hid.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_nfc.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_ble.c
+SRC_FILES += $(PROJ_DIR)/fido2/fido2_dbg.c
+SRC_FILES += $(PROJ_DIR)/standalone_modes/mode_fido2.c
+SRC_FILES += $(SDK_ROOT)/components/libraries/usbd/class/hid/generic/app_usbd_hid_generic.c
+SRC_FILES += $(SDK_ROOT)/components/libraries/usbd/class/hid/app_usbd_hid.c
 endif
 # Include folders common to all targets
 INC_FOLDERS += \

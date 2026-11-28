@@ -69,6 +69,9 @@
 #ifndef CONFIG_STANDALONE_USB_NET
 #define CONFIG_STANDALONE_USB_NET  1
 #endif
+#ifndef CONFIG_STANDALONE_FIDO2
+#define CONFIG_STANDALONE_FIDO2    0
+#endif
 
 /* -------------------------------------------------------------------------
  * FDS record keys (file ID FDS_STANDALONE_FILE_ID defined in fds_ids.h)
@@ -173,6 +176,9 @@ static const standalone_mode_iface_t *const m_modes[] = {
 #endif
 #if CONFIG_STANDALONE_ESB_PROMISC
     &mode_esb_promisc_iface,
+#endif
+#if CONFIG_STANDALONE_FIDO2 && defined(PROJECT_CHAMELEON_ULTRA)
+    &mode_fido2_iface,
 #endif
 #ifdef STANDALONE_TEST_MODE_IFACE
     &STANDALONE_TEST_MODE_IFACE,
