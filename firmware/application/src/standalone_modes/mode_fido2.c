@@ -17,9 +17,9 @@
  *              init(); disarming is the way to hand the field back.
  *
  * User presence / verification:
- *   ACTION (short press)     -> grant FIDO2_GATE_UP
- *   CLEAR  (very-long press) -> grant FIDO2_GATE_UV
- *   TOGGLE (long press)      -> framework arm/disarm, never intercepted here
+ *   ACTION (short press, bound to STANDALONE_ACTION) -> grant UP + UV together
+ *   TOGGLE (long press) -> framework arm/disarm, never intercepted here
+ *   No CLEAR / very-long-press gesture is used for UV.
  *
  * There is no result blob: the debug surface is `hw fido2 ...` plus the
  * `get_status` lines from f2_core_status(). This mode writes no standalone
@@ -106,15 +106,18 @@ static standalone_rc_t on_button(standalone_button_evt_t evt) {
 
     /* STANDALONE_BTN_BOTH_LONG is the framework's arm/disarm toggle; leaving
      * it in the default case keeps the framework's behaviour intact. */
-    fido2_gate_t gate = FIDO2_GATE_NONE;
     switch (evt) {
-        case STANDALONE_BTN_BOTH_SHORT: gate = FIDO2_GATE_UP; break;
-        case STANDALONE_BTN_BOTH_VLONG: gate = FIDO2_GATE_UV; break;
+        case STANDALONE_BTN_BOTH_SHORT: {
+            /* One short gesture grants UP then UV. UV is granted last because
+             * the core treats UV as satisfying a UP gate too, so this single
+             * press works for either ceremony. No CLEAR / very-long UV gesture. */
+            (void)f2_core_grant(FIDO2_GATE_UP);
+            bool granted = (f2_core_grant(FIDO2_GATE_UV) == FIDO2_ST_OK);
+            standalone_feedback(granted ? SL_FB_SUCCESS : SL_FB_DENIED);
+            break;
+        }
         default: return STANDALONE_RC_OK;
     }
-
-    bool granted = (f2_core_grant(gate) == FIDO2_ST_OK);
-    standalone_feedback(granted ? SL_FB_SUCCESS : SL_FB_DENIED);
     return STANDALONE_RC_OK;
 }
 

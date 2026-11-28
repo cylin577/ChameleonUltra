@@ -763,18 +763,18 @@ standalone status                      # includes live fido2 status lines
 standalone disarm
 ```
 
-**Buttons:** bind them with `hw settings btnpress`: `STANDALONE_ACTION` (short
-press) grants **UP** (user presence), `STANDALONE_CLEAR` grants **UV** (user
-verification) via the framework's very-long (`BOTH_VLONG`) event, and
-`STANDALONE_TOGGLE` (long press) stays the framework's arm/disarm toggle. The
-CLI has short and long press binding slots; binding the CLEAR function to a
-button is what produces the very-long event the mode sees. Grant failures flash
-red; successes flash green.
+**Buttons:** bind a short press to `STANDALONE_ACTION` with `hw settings
+btnpress`; that one gesture grants **both** UP (user presence) and UV (user
+verification). No `STANDALONE_CLEAR` binding is needed for UV. Bind **both**
+buttons A and B to `STANDALONE_ACTION` (short) to get the expected "short press
+on either key" behaviour. A long press bound to `STANDALONE_TOGGLE` stays the
+framework's arm/disarm toggle and is not intercepted here; arming also works
+from the host with `standalone trigger`. Grant failures flash red; successes
+flash green.
 
 ```
-hw settings btnpress -a -s -f STANDALONE_ACTION   # A short: grant UP
-hw settings btnpress -a -l -f STANDALONE_TOGGLE   # A long: framework arm/disarm
-hw settings btnpress -b -l -f STANDALONE_CLEAR    # B long: grant UV (very-long event)
+hw settings btnpress -a -s -f STANDALONE_ACTION
+hw settings btnpress -b -s -f STANDALONE_ACTION
 hw settings store
 ```
 
