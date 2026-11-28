@@ -47,6 +47,13 @@ void standalone_led_solid(void); /* solid LEDs in current mode colour */
 void standalone_led_set_mode_color(standalone_mode_t       mode,
                                    chameleon_rgb_type_t    color);
 
+/* True while FIDO2 is armed: keep the whole-strip mode colour instead of
+ * reverting to slot lighting after slot changes and feedback animations. */
+static inline bool standalone_led_mode_color_active(void) {
+    return app_standalone_get_state() != STANDALONE_STATE_DISARMED &&
+           app_standalone_get_mode() == STANDALONE_MODE_FIDO2;
+}
+
 #ifdef __cplusplus
 }
 #endif

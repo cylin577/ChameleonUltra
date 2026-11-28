@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include "rfid_main.h"
 #include "rgb_marquee.h"
+#include "standalone_led.h"
 
 //The current mode of the device
 device_mode_t rfid_state = DEVICE_MODE_NONE;
@@ -92,6 +93,10 @@ void light_up_by_slot(void) {
  * @brief Apply visual and state changes after switching slot
  */
 void apply_slot_change(uint8_t slot_now, uint8_t slot_new) {
+    if (standalone_led_mode_color_active()) {
+        standalone_led_solid();
+        return;
+    }
     uint8_t color_now = get_color_by_slot(slot_now);
     uint8_t color_new = get_color_by_slot(slot_new);
     rgb_marquee_slot_switch(slot_now, color_now, slot_new, color_new);

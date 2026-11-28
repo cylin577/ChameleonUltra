@@ -616,6 +616,11 @@ static void cycle_slot(bool dec) {
     }
     // Update status only if the new card slot switch is valid
     tag_emulation_change_slot(slot_new, true); // Tell the analog card module that we need to switch card slots
+    // FIDO2 stays armed: keep the whole-strip mode colour, do not touch LEDs.
+    if (standalone_led_mode_color_active()) {
+        standalone_led_solid();
+        return;
+    }
     // Turn off the LEDs in case we were showing the battery status
     rgb_marquee_stop();
     uint32_t *led_pins = hw_get_led_array();
@@ -713,8 +718,12 @@ static void refresh_feedback_step(bool on, bool green, bool done, void *ctx) {
     (void)ctx;
     uint8_t slot = tag_emulation_get_slot();
     if (done) {
-        set_slot_light_color(get_color_by_slot(slot));
-        light_up_by_slot();
+        if (standalone_led_mode_color_active()) {
+            standalone_led_solid();
+        } else {
+            set_slot_light_color(get_color_by_slot(slot));
+            light_up_by_slot();
+        }
         return;
     }
     uint32_t *led_pins = hw_get_led_array();
@@ -1382,8 +1391,12 @@ static void blink_usb_led_status(void) {
     if (nrfx_power_usbstatus_get() == NRFX_POWER_USB_STATE_DISCONNECTED) {
         if (is_working) {
             rgb_marquee_stop();
-            set_slot_light_color(color);
-            light_up_by_slot();
+            if (standalone_led_mode_color_active()) {
+                standalone_led_solid();
+            } else {
+                set_slot_light_color(color);
+                light_up_by_slot();
+            }
             is_working = false;
         }
     } else {
@@ -1404,8 +1417,12 @@ static void blink_usb_led_status(void) {
             if (is_working) {
                 is_working = false;
                 rgb_marquee_stop();
-                set_slot_light_color(color);
-                light_up_by_slot();
+                if (standalone_led_mode_color_active()) {
+                    standalone_led_solid();
+                } else {
+                    set_slot_light_color(color);
+                    light_up_by_slot();
+                }
             }
         }
     }
